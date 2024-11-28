@@ -1,1 +1,1 @@
-main src/main.c src/display.c include/display.h p101_env p101_error p101_fsm p101_posix ncurses
+main src/main.c src/display.c include/display.h p101_env p101_error p101_fsm p101_posix ncurses SDL2

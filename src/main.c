@@ -1,3 +1,7 @@
+#include <SDL2/SDL.h>
+#include <fcntl.h>
+#include <linux/input-event-codes.h>
+#include <linux/input.h>
 #include <ncurses.h>
 #include <p101_fsm/fsm.h>
 #include <p101_posix/p101_unistd.h>
@@ -5,17 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
 #include <unistd.h>
-#include <SDL2/SDL.h>
-#include <linux/input.h>
-#include <linux/input-event-codes.h>
-
-#define INPUT_DIR "/dev/input"
-#define DEVICE_NAME_SIZE 256
-#define PATH_SIZE 1024
-#define EVENT_TYPES_SIZE 64
-#define MAX_CONTROLLERS 10
 
 #define LINES 40
 #define COLS 40
@@ -92,27 +86,27 @@ int main(int argc, char *argv[])
     else
     {
         static struct p101_fsm_transition transitions[] = {
-            {P101_FSM_INIT,              SETUP,                  setup                 },
-            {SETUP,                      WAIT_FOR_INPUT,         wait_for_input        },
-            {WAIT_FOR_INPUT,             PROCESS_KEYBOARD_INPUT, process_keyboard_input},
-            {WAIT_FOR_INPUT,             PROCESS_NETWORK_INPUT,  process_network_input },
-            {PROCESS_KEYBOARD_INPUT,     MOVE_LOCAL,             move_local            },
-            {PROCESS_CONTROLLER_INPUT,   MOVE_LOCAL,             move_local            },
-            {PROCESS_NETWORK_INPUT,      MOVE_REMOTE,            move_remote           },
-            {PROCESS_KEYBOARD_INPUT,     WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
-            {PROCESS_CONTROLLER_INPUT,     WAIT_FOR_INPUT,         wait_for_input      }, //  if validation fails
-            {PROCESS_NETWORK_INPUT,      WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
-            {MOVE_LOCAL,                 WAIT_FOR_INPUT,         wait_for_input        },
-            {MOVE_REMOTE,                WAIT_FOR_INPUT,         wait_for_input        },
-            {SETUP,                      ERROR,                  state_error           },
-            {WAIT_FOR_INPUT,             ERROR,                  state_error           },
-            {PROCESS_KEYBOARD_INPUT,     ERROR,                  state_error           },
-            {PROCESS_CONTROLLER_INPUT,     ERROR,                  state_error           },
-            {PROCESS_NETWORK_INPUT,      ERROR,                  state_error           },
-            {MOVE_LOCAL,                 ERROR,                  state_error           },
-            {MOVE_REMOTE,                ERROR,                  state_error           },
-            {WAIT_FOR_INPUT,             P101_FSM_EXIT,          NULL                  }, //  if we ask to exit (cntrl c?)
-            {ERROR,                      P101_FSM_EXIT,          NULL                  }
+            {P101_FSM_INIT,            SETUP,                  setup                 },
+            {SETUP,                    WAIT_FOR_INPUT,         wait_for_input        },
+            {WAIT_FOR_INPUT,           PROCESS_KEYBOARD_INPUT, process_keyboard_input},
+            {WAIT_FOR_INPUT,           PROCESS_NETWORK_INPUT,  process_network_input },
+            {PROCESS_KEYBOARD_INPUT,   MOVE_LOCAL,             move_local            },
+            {PROCESS_CONTROLLER_INPUT, MOVE_LOCAL,             move_local            },
+            {PROCESS_NETWORK_INPUT,    MOVE_REMOTE,            move_remote           },
+            {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
+            {PROCESS_CONTROLLER_INPUT, WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
+            {PROCESS_NETWORK_INPUT,    WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
+            {MOVE_LOCAL,               WAIT_FOR_INPUT,         wait_for_input        },
+            {MOVE_REMOTE,              WAIT_FOR_INPUT,         wait_for_input        },
+            {SETUP,                    ERROR,                  state_error           },
+            {WAIT_FOR_INPUT,           ERROR,                  state_error           },
+            {PROCESS_KEYBOARD_INPUT,   ERROR,                  state_error           },
+            {PROCESS_CONTROLLER_INPUT, ERROR,                  state_error           },
+            {PROCESS_NETWORK_INPUT,    ERROR,                  state_error           },
+            {MOVE_LOCAL,               ERROR,                  state_error           },
+            {MOVE_REMOTE,              ERROR,                  state_error           },
+            {WAIT_FOR_INPUT,           P101_FSM_EXIT,          NULL                  }, //  if we ask to exit (cntrl c?)
+            {ERROR,                    P101_FSM_EXIT,          NULL                  }
         };
         p101_fsm_state_t from_state;
         p101_fsm_state_t to_state;
@@ -347,44 +341,50 @@ static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struc
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
-static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg) {
-    program_data *data = (program_data *)arg;
-    SDL_Event event;
-
+static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg)
+{
+    program_data       *data = (program_data *)arg;
+    SDL_Event           event;
+    SDL_GameController *controller = NULL;
     P101_TRACE(env);
 
     // Initialize SDL GameController subsystem
-    if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
+    if(SDL_Init(SDL_INIT_GAMECONTROLLER) != 0)
+    {
         fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
         return ERROR;
     }
 
-    SDL_GameController *controller = NULL;
-    if (SDL_NumJoysticks() > 0) {
+    if(SDL_NumJoysticks() > 0)
+    {
         controller = SDL_GameControllerOpen(0);
-        if (!controller) {
+        if(!controller)
+        {
             fprintf(stderr, "Could not open game controller: %s\n", SDL_GetError());
             SDL_Quit();
             return WAIT_FOR_INPUT;
         }
-    } else {
+    }
+    else
+    {
         fprintf(stderr, "No game controllers connected.\n");
         SDL_Quit();
         return WAIT_FOR_INPUT;
     }
 
     // Poll for controller events
-    while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP) {
-            printf("Button event: button %d %s\n",
-                   event.cbutton.button,
-                   event.type == SDL_CONTROLLERBUTTONDOWN ? "pressed" : "released");
+    while(SDL_PollEvent(&event))
+    {
+        if(event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP)
+        {
+            printf("Button event: button %d %s\n", event.cbutton.button, event.type == SDL_CONTROLLERBUTTONDOWN ? "pressed" : "released");
 
-            // Example: move based on button
-            switch (event.cbutton.button) {
+            switch(event.cbutton.button)
+            {
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                     data->x0--;
-                    if (data->x0 < 1) {
+                    if(data->x0 < 1)
+                    {
                         data->x0++;
                         data->invalid_move = true;
                         SDL_GameControllerClose(controller);
@@ -397,7 +397,8 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
 
                 case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
                     data->x0++;
-                    if (data->x0 >= COLS - 1) {
+                    if(data->x0 >= COLS - 1)
+                    {
                         data->x0--;
                         data->invalid_move = true;
                         SDL_GameControllerClose(controller);
@@ -410,7 +411,8 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
 
                 case SDL_CONTROLLER_BUTTON_DPAD_UP:
                     data->y0--;
-                    if (data->y0 < 1) {
+                    if(data->y0 < 1)
+                    {
                         data->y0++;
                         data->invalid_move = true;
                         SDL_GameControllerClose(controller);
@@ -423,7 +425,8 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
 
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                     data->y0++;
-                    if (data->y0 >= LINES - 1) {
+                    if(data->y0 >= LINES - 1)
+                    {
                         data->y0--;
                         data->invalid_move = true;
                         SDL_GameControllerClose(controller);
@@ -433,6 +436,10 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
                     SDL_GameControllerClose(controller);
                     SDL_Quit();
                     return MOVE_LOCAL;
+
+                default:
+                    printf("Unhandled button: %d\n", event.cbutton.button);
+                    break;
             }
         }
     }
