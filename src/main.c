@@ -1,7 +1,21 @@
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wswitch-default"
+#ifdef __clang__
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wreserved-macro-identifier"
+    #pragma clang diagnostic ignored "-Wreserved-identifier"
+    #pragma clang diagnostic ignored "-Wdocumentation-unknown-command"
+#endif
 #include <SDL2/SDL.h>
-#include <fcntl.h>
-#include <linux/input-event-codes.h>
-#include <linux/input.h>
+#pragma GCC diagnostic pop
+#ifdef __clang__
+    #pragma clang diagnostic pop
+#endif
+#ifdef __linux__
+    #include <fcntl.h>
+    #include <linux/input-event-codes.h>
+    #include <linux/input.h>
+#endif
 #include <ncurses.h>
 #include <p101_fsm/fsm.h>
 #include <p101_posix/p101_unistd.h>
@@ -17,6 +31,8 @@
 #define ZERO 0
 #define TIMER_DELAY 5
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
+
+// #define PORT 12345
 
 typedef struct
 {
@@ -311,7 +327,7 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
     }
 
     // timeout
-    FD_ZERO(&read_fds);
+    memset(&read_fds, 0, sizeof(read_fds));
     FD_SET(STDIN_FILENO, &read_fds);
     timeout.tv_sec  = TIMER_DELAY;
     timeout.tv_usec = 0;
@@ -503,17 +519,14 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
 
 static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p101_error *err, void *arg)
 {
-    int direction;
-
-    program_data *data;
+    uint32_t direction;
+    program_data *data = ((program_data *)arg);
     P101_TRACE(env);
-    data = ((program_data *)arg);
     box(data->win, ZERO, ZERO);
     wrefresh(data->win);
 
     // Generate random direction: 0 = LEFT, 1 = RIGHT, 2 = UP, 3 = DOWN
-    direction = rand() % 4;
-
+    direction = arc4random_uniform(4);
     // Adjust position based on direction
     switch(direction)
     {

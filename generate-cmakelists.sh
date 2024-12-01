@@ -3,73 +3,81 @@
 # Exit the script if any command fails
 set -e
 
-# Output file for CMakeLists.txt
+# Input and output files
 input_file="files.txt"
 output_file="CMakeLists.txt"
 processed_sources=""
 processed_headers=""
+requires_sdl2=false  # Flag to track if SDL2 is required
+sdl2_include_path="" # Variable to hold SDL2 include path
 
-# Function to generate CMakeLists-like content
-generate_cmake_content()
-{
-  local entity="$1"
-  shift
-  local sources=""
-  local headers=""
-  local libraries=""
+# Function to generate CMakeLists content
+generate_cmake_content() {
+    local entity="$1"
+    shift
+    local sources=""
+    local headers=""
+    local libraries=""
 
-  for file in "$@"; do
-    if [[ $file == *".c" ]]; then
-      # Check if the file has already been processed, using grep with fixed strings
-      if ! echo "$processed_sources" | grep -F -q "$file"; then
-        sources="${sources} \${CMAKE_SOURCE_DIR}/$file"
-        echo "list(APPEND SOURCES \${CMAKE_SOURCE_DIR}/$file)" >> "$output_file"
-        # Mark this file as processed
-        processed_sources="$processed_sources $file"
-      fi
-      echo "list(APPEND ${entity}_SOURCES \${CMAKE_SOURCE_DIR}/$file)" >> "$output_file"
-    elif [[ $file == *".h" ]]; then
-      # Similar check for headers
-      if ! echo "$processed_headers" | grep -F -q "$file"; then
-        headers="${headers} \${CMAKE_SOURCE_DIR}/$file"
-        echo "list(APPEND HEADERS \${CMAKE_SOURCE_DIR}/$file)" >> "$output_file"
-        # Mark this file as processed
-        processed_headers="$processed_headers $file"
-      fi
-      echo "list(APPEND ${entity}_HEADERS \${CMAKE_SOURCE_DIR}/$file)" >> "$output_file"
-    else
-      # Check for libraries, still using grep
-      if ! echo "$libraries" | grep -F -q "$file"; then
-        libraries="${libraries} $file"
-      fi
-    fi
-  done
+    for file in "$@"; do
+        if [[ $file == *.c ]]; then
+            if ! echo "$processed_sources" | grep -F -q "$file"; then
+                sources="${sources} \${CMAKE_SOURCE_DIR}/$file"
+                echo "list(APPEND SOURCES \${CMAKE_SOURCE_DIR}/$file)" >> "$output_file"
+                processed_sources="$processed_sources $file"
+            fi
+            echo "list(APPEND ${entity}_SOURCES \${CMAKE_SOURCE_DIR}/$file)" >> "$output_file"
+        elif [[ $file == *.h ]]; then
+            if ! echo "$processed_headers" | grep -F -q "$file"; then
+                headers="${headers} \${CMAKE_SOURCE_DIR}/$file"
+                echo "list(APPEND HEADERS \${CMAKE_SOURCE_DIR}/$file)" >> "$output_file"
+                processed_headers="$processed_headers $file"
+            fi
+            echo "list(APPEND ${entity}_HEADERS \${CMAKE_SOURCE_DIR}/$file)" >> "$output_file"
+        else
+            if [[ $file == "SDL2" ]]; then
+                requires_sdl2=true
+                sdl2_include_path="/Library/Frameworks/SDL2.framework/Headers"
+            fi
+            if ! echo "$libraries" | grep -F -q "$file"; then
+                libraries="${libraries} $file"
+            fi
+        fi
+    done
 
-#  echo "" >> "$output_file"
-#  echo "set(${entity}_SOURCES" >> "$output_file"
-#  echo -e "$sources)" >> "$output_file"
-#  echo "" >> "$output_file"
-#  echo "set(${entity}_HEADERS" >> "$output_file"
-#  echo -e "$headers)" >> "$output_file"
-#  echo "" >> "$output_file"
-  echo "add_executable($entity \${${entity}_SOURCES})" >> "$output_file"
-  echo "target_include_directories($entity PUBLIC \${CMAKE_SOURCE_DIR}/include)" >> "$output_file"
-  echo "target_include_directories($entity PRIVATE /usr/local/include)" >> "$output_file"
-  echo "" >> "$output_file"
+    # Add executable
+    echo "add_executable($entity \${${entity}_SOURCES})" >> "$output_file"
+    echo "target_include_directories($entity PRIVATE /usr/local/include) " >> "$output_file"
+    echo "target_include_directories($entity PUBLIC \${CMAKE_SOURCE_DIR}/include)" >> "$output_file"
 
-  echo "target_link_directories($entity PRIVATE /usr/local/lib\${LIBSUFFIX})" >> "$output_file"
-  echo "target_link_options($entity PRIVATE \${INSTRUMENTATION_FLAGS_LIST})" >> "$output_file"
-  echo "" >> "$output_file"
-
-  # Add target_link_libraries for the entity
-  for library in $libraries; do
-    echo "find_library(LIB_$library NAMES $library)" >> "$output_file"
-    echo "if(LIB_$library)" >> "$output_file"
-    echo "    target_link_libraries($entity PRIVATE \${LIB_$library})" >> "$output_file"
-    echo "endif()" >> "$output_file"
-    echo "" >> "$output_file"
-  done
-  echo "" >> "$output_file"
+    # Handle libraries
+    for library in $libraries; do
+        if [[ $library == "SDL2" ]]; then
+            echo "if(APPLE)" >> "$output_file"
+            echo "    find_library(SDL2_FRAMEWORK SDL2 REQUIRED PATHS /Library/Frameworks)" >> "$output_file"
+            echo "    if(SDL2_FRAMEWORK)" >> "$output_file"
+            echo "        message(STATUS \"SDL2 Framework found: \${SDL2_FRAMEWORK}\")" >> "$output_file"
+            echo "        target_include_directories($entity PRIVATE \"${sdl2_include_path}\")" >> "$output_file"
+            echo "        target_link_options($entity PRIVATE \"-F/Library/Frameworks\")" >> "$output_file"
+            echo "        target_link_libraries($entity PRIVATE \"-framework SDL2\")" >> "$output_file"
+            echo "    else()" >> "$output_file"
+            echo "        message(FATAL_ERROR \"SDL2.framework not found in /Library/Frameworks\")" >> "$output_file"
+            echo "    endif()" >> "$output_file"
+            echo "elseif(UNIX)" >> "$output_file"
+            echo "    find_package(SDL2 REQUIRED)" >> "$output_file"
+            echo "    target_include_directories($entity PRIVATE \${SDL2_INCLUDE_DIRS})" >> "$output_file"
+            echo "    target_link_libraries($entity PRIVATE SDL2::SDL2)" >> "$output_file"
+            echo "endif()" >> "$output_file"
+        else
+            echo "find_library(LIB_$library NAMES $library REQUIRED)" >> "$output_file"
+            echo "if(LIB_$library)" >> "$output_file"
+            echo "    message(STATUS \"$library found: \${LIB_$library}\")" >> "$output_file"
+            echo "    target_link_libraries($entity PRIVATE \${LIB_$library})" >> "$output_file"
+            echo "else()" >> "$output_file"
+            echo "    message(FATAL_ERROR \"$library not found\")" >> "$output_file"
+            echo "endif()" >> "$output_file"
+        fi
+    done
 }
 
 # Additional code
@@ -328,33 +336,39 @@ generate_cmake_content()
   echo "find_program(CPPCHECK NAMES \${CPPCHECK_NAME} REQUIRED)" >> "$output_file"
   echo "" >> "$output_file"
 
-  # Format source files using clang-format
+  # clang-format integration
   echo "add_custom_target(format" >> "$output_file"
   echo "    COMMAND \${CLANG_FORMAT} --style=file -i \${SOURCES} \${HEADERS}" >> "$output_file"
   echo "    WORKING_DIRECTORY \${CMAKE_SOURCE_DIR}" >> "$output_file"
-  echo "    COMMENT \"Running clang-format\"" >> "$output_file"
+  echo "    COMMENT \"Running clang-format on source and header files\"" >> "$output_file"
   echo ")" >> "$output_file"
   echo "" >> "$output_file"
-
-  # Add dependencies for the first target
   echo "add_dependencies($first_target format)" >> "$output_file"
   echo "" >> "$output_file"
 
-  # Add the cppcheck custom command
-  echo "add_custom_command(" >> "$output_file"
-  echo "    TARGET $first_target POST_BUILD" >> "$output_file"
-  echo "    COMMAND \${CLANG_TIDY} \${SOURCES} \${HEADERS} -quiet --warnings-as-errors='*' -checks=*,-llvmlibc-restrict-system-libc-headers,-altera-struct-pack-align,-readability-identifier-length,-altera-unroll-loops,-cppcoreguidelines-init-variables,-cert-err33-c,-modernize-macro-to-enum,-bugprone-easily-swappable-parameters,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-altera-id-dependent-backward-branch,-concurrency-mt-unsafe,-misc-unused-parameters,-hicpp-signed-bitwise,-google-readability-todo,-cert-msc30-c,-cert-msc50-cpp,-readability-function-cognitive-complexity,-clang-analyzer-security.insecureAPI.strcpy,-cert-env33-c,-android-cloexec-accept,-clang-analyzer-security.insecureAPI.rand,-misc-include-cleaner,-llvm-header-guard,-cppcoreguidelines-macro-to-enum -- \${STANDARD_FLAGS} -I\${CMAKE_SOURCE_DIR}/include -I/usr/local/include" >> "$output_file"
-  echo "    WORKING_DIRECTORY \${CMAKE_SOURCE_DIR}" >> "$output_file"
-  echo "    COMMENT \"Running clang-tidy\"" >> "$output_file"
+  # clang-tidy integration
+  echo "add_custom_command(TARGET $first_target POST_BUILD" >> "$output_file"
+  echo -n "    COMMAND \${CLANG_TIDY} \${SOURCES} \${HEADERS} -quiet --warnings-as-errors='*' -checks=*,-llvmlibc-restrict-system-libc-headers,-altera-struct-pack-align,-readability-identifier-length,-altera-unroll-loops,-cppcoreguidelines-init-variables,-cert-err33-c,-modernize-macro-to-enum,-bugprone-easily-swappable-parameters,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-altera-id-dependent-backward-branch,-concurrency-mt-unsafe,-misc-unused-parameters,-hicpp-signed-bitwise,-google-readability-todo,-cert-msc30-c,-cert-msc50-cpp,-readability-function-cognitive-complexity,-clang-analyzer-security.insecureAPI.strcpy,-cert-env33-c,-android-cloexec-accept,-clang-analyzer-security.insecureAPI.rand,-misc-include-cleaner,-llvm-header-guard,-cppcoreguidelines-macro-to-enum -- \${STANDARD_FLAGS} -I\${CMAKE_SOURCE_DIR}/include -I/usr/local/include" >> "$output_file"
+  if $requires_sdl2; then
+    echo " -isystem${sdl2_include_path}" >> "$output_file"
+  else
+    echo "" >> "$output_file"
+  fi
+  echo "    COMMENT \"Running clang-tidy checks\"" >> "$output_file"
   echo ")" >> "$output_file"
-  echo "" >> "$output_file"
 
   # Check if CMAKE_C_COMPILER starts with "clang" and add custom targets
   echo "if (CMAKE_C_COMPILER MATCHES \".*/clang.*\")" >> "$output_file"
   echo "    # Add a custom target for clang --analyze" >> "$output_file"
   echo "    add_custom_command(" >> "$output_file"
   echo "        TARGET $first_target POST_BUILD" >> "$output_file"
-  echo "        COMMAND \${CMAKE_C_COMPILER} --analyzer-output text --analyze -Xclang -analyzer-checker=core --analyze -Xclang -analyzer-checker=deadcode -Xclang -analyzer-checker=security -Xclang -analyzer-disable-checker=security.insecureAPI.DeprecatedOrUnsafeBufferHandling -Xclang -analyzer-checker=unix -Xclang -analyzer-checker=unix \${CMAKE_C_FLAGS} \${STANDARD_FLAGS} -I\${CMAKE_SOURCE_DIR}/include -I/usr/local/include \${SOURCES} \${HEADERS}" >> "$output_file"
+  echo "        COMMAND \${CMAKE_C_COMPILER} --analyzer-output text --analyze -Xclang -analyzer-checker=core --analyze -Xclang -analyzer-checker=deadcode -Xclang -analyzer-checker=security -Xclang -analyzer-disable-checker=security.insecureAPI.DeprecatedOrUnsafeBufferHandling -Xclang -analyzer-checker=unix -Xclang -analyzer-checker=unix \${CMAKE_C_FLAGS} \${STANDARD_FLAGS} -I\${CMAKE_SOURCE_DIR}/include -I/usr/local/include" >> "$output_file"
+  if $requires_sdl2; then
+    echo "             -isystem${sdl2_include_path}" >> "$output_file"
+  else
+    echo "" >> "$output_file"
+  fi
+  echo "             \${SOURCES} \${HEADERS}" >> "$output_file"
   echo "        WORKING_DIRECTORY \${CMAKE_SOURCE_DIR}" >> "$output_file"
   echo "        COMMENT \"Running clang --analyze\"" >> "$output_file"
   echo "    )" >> "$output_file"
