@@ -20,12 +20,13 @@
 
 typedef struct
 {
-    const char *host_ip;
-    const char *dest_ip;
-    WINDOW     *win;
-    bool        invalid_move;
-    int         y0;
-    int         x0;
+    const char         *host_ip;
+    const char         *dest_ip;
+    WINDOW             *win;
+    bool                invalid_move;
+    int                 y0;
+    int                 x0;
+    SDL_GameController *controller;
 } program_data;
 
 enum application_states
@@ -130,6 +131,8 @@ int main(int argc, char *argv[])
     p101_error_reset(error);
     free(error);
 
+    SDL_Quit();
+
     return EXIT_SUCCESS;
 }
 
@@ -230,15 +233,37 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     data = ((program_data *)arg);
     printf("setting up with %s and %s!\n", data->host_ip, data->dest_ip);
 
+    // Initialize SDL for controller input
+    if(SDL_Init(SDL_INIT_GAMECONTROLLER) != 0)
+    {
+        fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
+        return ERROR;
+    }
+
+    if(SDL_NumJoysticks() > 0)
+    {
+        data->controller = SDL_GameControllerOpen(0);
+        if(!data->controller)
+        {
+            fprintf(stderr, "Could not open game controller: %s\n", SDL_GetError());
+            SDL_Quit();
+            return ERROR;
+        }
+    }
+    else
+    {
+        printf("No game controllers connected.\n");
+        SDL_Quit();
+        return ERROR;
+    }
+
+    // Initialize ncurses
     // init screen and sets up screen
     initscr();
-
     // disables buffers on lines
     raw();
-
     // allows us to get arrow keys
     keypad(stdscr, TRUE);
-
     // suppresses char echoing
     noecho();
     // Hide the cursor
@@ -267,6 +292,7 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
 static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg)
 {
     program_data *data;
+    SDL_Event     event;
 
     // Setup for monitoring input with timeout
     fd_set         read_fds;
@@ -276,6 +302,7 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
     P101_TRACE(env);
     data = ((program_data *)arg);
 
+    // Handles Invalid Moves
     if(data->invalid_move)
     {
         mvprintw(LINES + 1, 0, "INVALID MOVE");
@@ -291,6 +318,25 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
 
     // Triggers timer move unless something is pressed
     retval = select(STDIN_FILENO + 1, &read_fds, NULL, NULL, &timeout);
+
+    // Check for SDL controller events
+    while(SDL_PollEvent(&event))
+    {
+        if(event.type == SDL_CONTROLLERBUTTONDOWN)
+        {
+            // If directional button is pressed, transition to controller input state
+            switch(event.cbutton.button)
+            {
+                case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                    return PROCESS_CONTROLLER_INPUT;
+                default:
+                    break;
+            }
+        }
+    }
 
     if(retval == -1)
     {
@@ -387,44 +433,21 @@ static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struc
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
+// Notes for PS4: Left = 13, Right = 14, Up = 11, Down = 12
 static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg)
 {
-    program_data       *data = (program_data *)arg;
-    SDL_Event           event;
-    SDL_GameController *controller = NULL;
+    SDL_Event event;
+
+    program_data *data;
     P101_TRACE(env);
+    data = ((program_data *)arg);
+    box(data->win, ZERO, ZERO);    // borders
+    wrefresh(data->win);
 
-    // Initialize SDL GameController subsystem
-    if(SDL_Init(SDL_INIT_GAMECONTROLLER) != 0)
-    {
-        fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
-        return ERROR;
-    }
-
-    if(SDL_NumJoysticks() > 0)
-    {
-        controller = SDL_GameControllerOpen(0);
-        if(!controller)
-        {
-            fprintf(stderr, "Could not open game controller: %s\n", SDL_GetError());
-            SDL_Quit();
-            return WAIT_FOR_INPUT;
-        }
-    }
-    else
-    {
-        fprintf(stderr, "No game controllers connected.\n");
-        SDL_Quit();
-        return WAIT_FOR_INPUT;
-    }
-
-    // Poll for controller events
     while(SDL_PollEvent(&event))
     {
-        if(event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP)
+        if(event.type == SDL_CONTROLLERBUTTONDOWN)
         {
-            printf("Button event: button %d %s\n", event.cbutton.button, event.type == SDL_CONTROLLERBUTTONDOWN ? "pressed" : "released");
-
             switch(event.cbutton.button)
             {
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
@@ -433,56 +456,36 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
                     {
                         data->x0++;
                         data->invalid_move = true;
-                        SDL_GameControllerClose(controller);
-                        SDL_Quit();
                         return WAIT_FOR_INPUT;
                     }
-                    SDL_GameControllerClose(controller);
-                    SDL_Quit();
                     return MOVE_LOCAL;
-
                 case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
                     data->x0++;
                     if(data->x0 >= COLS - 1)
                     {
                         data->x0--;
                         data->invalid_move = true;
-                        SDL_GameControllerClose(controller);
-                        SDL_Quit();
                         return WAIT_FOR_INPUT;
                     }
-                    SDL_GameControllerClose(controller);
-                    SDL_Quit();
                     return MOVE_LOCAL;
-
                 case SDL_CONTROLLER_BUTTON_DPAD_UP:
                     data->y0--;
                     if(data->y0 < 1)
                     {
                         data->y0++;
                         data->invalid_move = true;
-                        SDL_GameControllerClose(controller);
-                        SDL_Quit();
                         return WAIT_FOR_INPUT;
                     }
-                    SDL_GameControllerClose(controller);
-                    SDL_Quit();
                     return MOVE_LOCAL;
-
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                     data->y0++;
                     if(data->y0 >= LINES - 1)
                     {
                         data->y0--;
                         data->invalid_move = true;
-                        SDL_GameControllerClose(controller);
-                        SDL_Quit();
                         return WAIT_FOR_INPUT;
                     }
-                    SDL_GameControllerClose(controller);
-                    SDL_Quit();
                     return MOVE_LOCAL;
-
                 default:
                     printf("Unhandled button: %d\n", event.cbutton.button);
                     break;
@@ -490,8 +493,6 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
         }
     }
 
-    SDL_GameControllerClose(controller);
-    SDL_Quit();
     return WAIT_FOR_INPUT;
 }
 
@@ -502,12 +503,13 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
 
 static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p101_error *err, void *arg)
 {
-    int           direction;
-    program_data *data = (program_data *)arg;
-    data               = ((program_data *)arg);
-    box(data->win, ZERO, ZERO);    // borders
-    wrefresh(data->win);
+    int direction;
+
+    program_data *data;
     P101_TRACE(env);
+    data = ((program_data *)arg);
+    box(data->win, ZERO, ZERO);
+    wrefresh(data->win);
 
     // Generate random direction: 0 = LEFT, 1 = RIGHT, 2 = UP, 3 = DOWN
     direction = rand() % 4;
@@ -515,7 +517,7 @@ static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p1
     // Adjust position based on direction
     switch(direction)
     {
-        case 0:
+        case 0:    // LEFT
             data->x0--;
             if(data->x0 < 1)
             {
@@ -524,7 +526,7 @@ static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p1
                 return WAIT_FOR_INPUT;
             }
             break;
-        case 1:
+        case 1:    // RIGHT
             data->x0++;
             if(data->x0 >= COLS - 1)
             {
@@ -552,10 +554,10 @@ static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p1
             }
             break;
         default:
-            data->invalid_move = true;
-            return WAIT_FOR_INPUT;
+            break;
     }
 
+    // Trigger MOVE_LOCAL for valid moves
     return MOVE_LOCAL;
 }
 
