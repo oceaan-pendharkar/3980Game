@@ -15,6 +15,7 @@
 #define COLS 40
 #define ONE 1
 #define ZERO 0
+#define UNKNOWN_OPTION_MESSAGE_LEN 24
 
 typedef struct
 {
@@ -26,23 +27,9 @@ typedef struct
     int         x0;
 } program_data;
 
-static void             parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data);
-_Noreturn static void   usage(const char *program_name, int exit_code, const char *message);
-static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err, void *arg);
-static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg);
-static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg);
-static p101_fsm_state_t process_network_input(const struct p101_env *env, struct p101_error *err, void *arg);
-static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error *err, void *arg);
-static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_error *err, void *arg);
-static p101_fsm_state_t state_error(const struct p101_env *env, struct p101_error *err, void *arg);
-static void             setup_signal_handler(void);
-static void             sigint_handler(int signum);
-
-static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-
 enum application_states
 {
-    SETUP = P101_FSM_USER_START,    // 2
+    SETUP = P101_FSM_USER_START,
     WAIT_FOR_INPUT,
     PROCESS_KEYBOARD_INPUT,
     PROCESS_CONTROLLER_INPUT,
@@ -52,7 +39,20 @@ enum application_states
     ERROR
 };
 
-#define UNKNOWN_OPTION_MESSAGE_LEN 24
+static void             parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data);
+_Noreturn static void   usage(const char *program_name, int exit_code, const char *message);
+static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err, void *arg);
+static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg);
+static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg);
+static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg);
+static p101_fsm_state_t process_network_input(const struct p101_env *env, struct p101_error *err, void *arg);
+static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error *err, void *arg);
+static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_error *err, void *arg);
+static p101_fsm_state_t state_error(const struct p101_env *env, struct p101_error *err, void *arg);
+static void             setup_signal_handler(void);
+static void             sigint_handler(int signum);
+
+static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 int main(int argc, char *argv[])
 {
@@ -86,33 +86,37 @@ int main(int argc, char *argv[])
     else
     {
         static struct p101_fsm_transition transitions[] = {
-            {P101_FSM_INIT,            SETUP,                  setup                 },
-            {SETUP,                    WAIT_FOR_INPUT,         wait_for_input        },
-            {WAIT_FOR_INPUT,           PROCESS_KEYBOARD_INPUT, process_keyboard_input},
-            {WAIT_FOR_INPUT,           PROCESS_NETWORK_INPUT,  process_network_input },
-            {PROCESS_KEYBOARD_INPUT,   MOVE_LOCAL,             move_local            },
-            {PROCESS_CONTROLLER_INPUT, MOVE_LOCAL,             move_local            },
-            {PROCESS_NETWORK_INPUT,    MOVE_REMOTE,            move_remote           },
-            {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
-            {PROCESS_CONTROLLER_INPUT, WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
-            {PROCESS_NETWORK_INPUT,    WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
-            {MOVE_LOCAL,               WAIT_FOR_INPUT,         wait_for_input        },
-            {MOVE_REMOTE,              WAIT_FOR_INPUT,         wait_for_input        },
-            {SETUP,                    ERROR,                  state_error           },
-            {WAIT_FOR_INPUT,           ERROR,                  state_error           },
-            {PROCESS_KEYBOARD_INPUT,   ERROR,                  state_error           },
-            {PROCESS_CONTROLLER_INPUT, ERROR,                  state_error           },
-            {PROCESS_NETWORK_INPUT,    ERROR,                  state_error           },
-            {MOVE_LOCAL,               ERROR,                  state_error           },
-            {MOVE_REMOTE,              ERROR,                  state_error           },
-            {WAIT_FOR_INPUT,           P101_FSM_EXIT,          NULL                  }, //  if we ask to exit (cntrl c?)
-            {ERROR,                    P101_FSM_EXIT,          NULL                  }
+            {P101_FSM_INIT,            SETUP,                    setup                   },
+            {SETUP,                    WAIT_FOR_INPUT,           wait_for_input          },
+            {WAIT_FOR_INPUT,           PROCESS_KEYBOARD_INPUT,   process_keyboard_input  },
+            {WAIT_FOR_INPUT,           PROCESS_CONTROLLER_INPUT, process_controller_input},
+            {WAIT_FOR_INPUT,           PROCESS_NETWORK_INPUT,    process_network_input   },
+            {PROCESS_KEYBOARD_INPUT,   MOVE_LOCAL,               move_local              },
+            {PROCESS_CONTROLLER_INPUT, MOVE_LOCAL,               move_local              },
+            {PROCESS_NETWORK_INPUT,    MOVE_REMOTE,              move_remote             },
+            {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
+            {PROCESS_CONTROLLER_INPUT, WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
+            {PROCESS_NETWORK_INPUT,    WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
+            {MOVE_LOCAL,               WAIT_FOR_INPUT,           wait_for_input          },
+            {MOVE_REMOTE,              WAIT_FOR_INPUT,           wait_for_input          },
+            {SETUP,                    ERROR,                    state_error             },
+            {WAIT_FOR_INPUT,           ERROR,                    state_error             },
+            {PROCESS_KEYBOARD_INPUT,   ERROR,                    state_error             },
+            {PROCESS_CONTROLLER_INPUT, ERROR,                    state_error             },
+            {PROCESS_NETWORK_INPUT,    ERROR,                    state_error             },
+            {MOVE_LOCAL,               ERROR,                    state_error             },
+            {MOVE_REMOTE,              ERROR,                    state_error             },
+            {WAIT_FOR_INPUT,           P101_FSM_EXIT,            NULL                    }, //  if we ask to exit (cntrl c?)
+            {ERROR,                    P101_FSM_EXIT,            NULL                    }
         };
         p101_fsm_state_t from_state;
         p101_fsm_state_t to_state;
         p101_fsm_run(fsm, &from_state, &to_state, &data, transitions, sizeof(transitions));
         p101_fsm_info_destroy(env, &fsm);
     }
+
+    // Restore the cursor before exiting
+    curs_set(1);
     // deallocates memory and ends ncurses
     endwin();
 
@@ -232,6 +236,8 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
 
     // suppresses char echoing
     noecho();
+    // Hide the cursor
+    curs_set(0);
 
     // creates the window
     data->win = newwin(lines, cols, y0, x0);
@@ -241,6 +247,9 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     // refreshes the screen
     refresh();
     box(data->win, 0, 0);    // borders
+
+    // draw initial dot
+    mvwprintw(data->win, data->y0, data->x0, "*");
     wrefresh(data->win);
 
     return WAIT_FOR_INPUT;
