@@ -15,6 +15,7 @@
 #define COLS 40
 #define ONE 1
 #define ZERO 0
+#define TIMER_DELAY 5
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 
 typedef struct
@@ -33,6 +34,7 @@ enum application_states
     WAIT_FOR_INPUT,
     PROCESS_KEYBOARD_INPUT,
     PROCESS_CONTROLLER_INPUT,
+    PROCESS_TIMER_MOVE,
     PROCESS_NETWORK_INPUT,
     MOVE_LOCAL,
     MOVE_REMOTE,
@@ -45,6 +47,7 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
 static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg);
+static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t process_network_input(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_error *err, void *arg);
@@ -90,9 +93,11 @@ int main(int argc, char *argv[])
             {SETUP,                    WAIT_FOR_INPUT,           wait_for_input          },
             {WAIT_FOR_INPUT,           PROCESS_KEYBOARD_INPUT,   process_keyboard_input  },
             {WAIT_FOR_INPUT,           PROCESS_CONTROLLER_INPUT, process_controller_input},
+            {WAIT_FOR_INPUT,           PROCESS_TIMER_MOVE,       process_timer_move      },
             {WAIT_FOR_INPUT,           PROCESS_NETWORK_INPUT,    process_network_input   },
             {PROCESS_KEYBOARD_INPUT,   MOVE_LOCAL,               move_local              },
             {PROCESS_CONTROLLER_INPUT, MOVE_LOCAL,               move_local              },
+            {PROCESS_TIMER_MOVE,       MOVE_LOCAL,               move_local              },
             {PROCESS_NETWORK_INPUT,    MOVE_REMOTE,              move_remote             },
             {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
             {PROCESS_CONTROLLER_INPUT, WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
@@ -262,18 +267,50 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
 static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg)
 {
     program_data *data;
+
+    // Setup for monitoring input with timeout
+    fd_set         read_fds;
+    struct timeval timeout;
+    int            retval;
+
     P101_TRACE(env);
     data = ((program_data *)arg);
 
     if(data->invalid_move)
     {
-        mvwprintw(data->win, ONE, ONE, "INVALID MOVE!\n");
+        mvprintw(LINES + 1, 0, "INVALID MOVE");
         wrefresh(data->win);
         data->invalid_move = false;
     }
 
-    // we will only return process keyboard input if we receive keyboard input, of course
-    return PROCESS_KEYBOARD_INPUT;
+    // timeout
+    FD_ZERO(&read_fds);
+    FD_SET(STDIN_FILENO, &read_fds);
+    timeout.tv_sec  = TIMER_DELAY;
+    timeout.tv_usec = 0;
+
+    // Triggers timer move unless something is pressed
+    retval = select(STDIN_FILENO + 1, &read_fds, NULL, NULL, &timeout);
+
+    if(retval == -1)
+    {
+        perror("select");
+        return ERROR;
+    }
+
+    if(retval == 0)
+    {
+        // Timeout occurred, trigger timer-based move
+        return PROCESS_TIMER_MOVE;
+    }
+
+    if(FD_ISSET(STDIN_FILENO, &read_fds))
+    {
+        // Input detected, handle keyboard input
+        return PROCESS_KEYBOARD_INPUT;
+    }
+
+    return WAIT_FOR_INPUT;
 }
 
 #pragma GCC diagnostic push
@@ -463,6 +500,70 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
+static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p101_error *err, void *arg)
+{
+    int           direction;
+    program_data *data = (program_data *)arg;
+    data               = ((program_data *)arg);
+    box(data->win, ZERO, ZERO);    // borders
+    wrefresh(data->win);
+    P101_TRACE(env);
+
+    // Generate random direction: 0 = LEFT, 1 = RIGHT, 2 = UP, 3 = DOWN
+    direction = rand() % 4;
+
+    // Adjust position based on direction
+    switch(direction)
+    {
+        case 0:
+            data->x0--;
+            if(data->x0 < 1)
+            {
+                data->x0++;
+                data->invalid_move = true;
+                return WAIT_FOR_INPUT;
+            }
+            break;
+        case 1:
+            data->x0++;
+            if(data->x0 >= COLS - 1)
+            {
+                data->x0--;
+                data->invalid_move = true;
+                return WAIT_FOR_INPUT;
+            }
+            break;
+        case 2:    // UP
+            data->y0--;
+            if(data->y0 < 1)
+            {
+                data->y0++;
+                data->invalid_move = true;
+                return WAIT_FOR_INPUT;
+            }
+            break;
+        case 3:    // DOWN
+            data->y0++;
+            if(data->y0 >= LINES - 1)
+            {
+                data->y0--;
+                data->invalid_move = true;
+                return WAIT_FOR_INPUT;
+            }
+            break;
+        default:
+            data->invalid_move = true;
+            return WAIT_FOR_INPUT;
+    }
+
+    return MOVE_LOCAL;
+}
+
+#pragma GCC diagnostic pop
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
 // In this function we will process network input and validate the move.
 // If the move is invalid, we will return WAIT_FOR_INPUT
 // If the move is valid, we will return MOVE_REMOTE
@@ -486,7 +587,7 @@ static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error
     program_data *data;
     P101_TRACE(env);
     data = ((program_data *)arg);
-    printf("move_local called with host_ip %s and dest_ip %s\n", data->host_ip, data->dest_ip);
+    // printf("move_local called with host_ip %s and dest_ip %s\n", data->host_ip, data->dest_ip);
     wclear(data->win);
     mvwprintw(data->win, data->y0, data->x0, "*");
     return WAIT_FOR_INPUT;
