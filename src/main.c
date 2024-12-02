@@ -270,7 +270,6 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     {
         printf("No game controllers connected.\n");
         SDL_Quit();
-        return ERROR;
     }
 
     // Initialize ncurses
@@ -321,11 +320,20 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
     // Handles Invalid Moves
     if(data->invalid_move)
     {
-        mvprintw(LINES + 1, 0, "INVALID MOVE");
+        mvprintw(LINES + 1, 0, "");
+
+        mvprintw(LINES + 1, 0, "INVALID MOVE                              ");
         wrefresh(data->win);
         data->invalid_move = false;
     }
+    else
+    {
+        mvprintw(LINES + 1, 0, "");
 
+        mvprintw(LINES + 1, 0, "Hit arrow keys or your controller to move.");
+        box(data->win, ZERO, ZERO);    // borders
+        wrefresh(data->win);
+    }
     // timeout
     memset(&read_fds, 0, sizeof(read_fds));
     FD_SET(STDIN_FILENO, &read_fds);
@@ -519,7 +527,7 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
 
 static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p101_error *err, void *arg)
 {
-    uint32_t direction;
+    uint32_t      direction;
     program_data *data = ((program_data *)arg);
     P101_TRACE(env);
     box(data->win, ZERO, ZERO);
