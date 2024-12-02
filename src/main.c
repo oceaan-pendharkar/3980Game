@@ -416,6 +416,9 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
     if(retval == -1)
     {
         perror("select");
+        endwin();
+        close(data->local_udp_socket);
+        printf("exiting due to select...\n");
         return ERROR;
     }
 
@@ -434,8 +437,21 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
         if(bytes_read == -1)
         {
             perror("read");
+            endwin();
+            close(data->local_udp_socket);
+            printf("exiting due to keyboard read...\n");
             return ERROR;
         }
+
+        if(buffer[0] == '\x03')
+        {
+            printf("Ctrl+C detected, exiting gracefully.\n");
+            perror("sigint");
+            endwin();
+            close(data->local_udp_socket);
+            return ERROR;
+        }
+
         // A == up -> 1
         if(buffer[2] == 'A')
         {
@@ -476,6 +492,9 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
         if(bytes_received < 0)
         {
             perror("recvfrom");
+            endwin();
+            close(data->local_udp_socket);
+            printf("exiting due to recvfrom...\n");
             return ERROR;
         }
 
@@ -548,7 +567,8 @@ static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struc
                 break;
             default:
                 printf("unknown keyboard input\n");
-                break;
+                sleep(2);
+                return WAIT_FOR_INPUT;
         }
         printf("moving local x = %d, y = %d\n", data->local_x, data->local_y);
         return MOVE_LOCAL;
