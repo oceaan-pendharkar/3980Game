@@ -300,9 +300,8 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     else
     {
         printf("No game controllers connected.\n");
-        SDL_Quit();
+        //        SDL_Quit();
     }
-
     // Initialize ncurses
     // init screen and sets up screen
     initscr();
@@ -328,7 +327,7 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
 
     // draw initial dots
     mvwprintw(data->win, data->local_y, data->local_x, "*");
-    mvwprintw(data->win, data->local_y, data->local_x, "@");
+    mvwprintw(data->win, data->remote_y, data->remote_x, "@");
 
     wrefresh(data->win);
 
@@ -350,16 +349,16 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
     int                retval;
     struct sockaddr_in client_addr;
     socklen_t          addr_len = sizeof(client_addr);
-    int                received_int;
+    uint16_t           received_int;
 
     P101_TRACE(env);
     data = ((program_data *)arg);
+    printf("waiting for input...\n");
 
     // Handles Invalid Moves
     if(data->invalid_move)
     {
         mvprintw(LINES + 1, 0, "");
-
         mvprintw(LINES + 1, 0, "INVALID MOVE                              ");    // the line needs to be this long to clear the other text
         wrefresh(data->win);
         data->invalid_move = false;
@@ -367,7 +366,6 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
     else
     {
         mvprintw(LINES + 1, 0, "");
-
         mvprintw(LINES + 1, 0, "Hit arrow keys or your controller to move.");
         box(data->win, ZERO, ZERO);    // borders
         wrefresh(data->win);
@@ -422,8 +420,10 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
 
     if(FD_ISSET(data->local_udp_socket, &read_fds))
     {
+        ssize_t bytes_received;
         // UDP packet received
-        ssize_t bytes_received = recvfrom(data->local_udp_socket, &received_int, sizeof(received_int), 0, (struct sockaddr *)&client_addr, &addr_len);
+        printf("receiving\n");
+        bytes_received = recvfrom(data->local_udp_socket, &received_int, sizeof(received_int), 0, (struct sockaddr *)&client_addr, &addr_len);
         if(bytes_received < 0)
         {
             perror("recvfrom");
@@ -709,6 +709,7 @@ static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error
     data = ((program_data *)arg);
     wclear(data->win);
     mvwprintw(data->win, data->local_y, data->local_x, "*");
+    printf("sending udup packet....\n");
     send_udp_packet(data->dest_ip, data->send_value);
     return WAIT_FOR_INPUT;
 }
