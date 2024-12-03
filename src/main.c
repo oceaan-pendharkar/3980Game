@@ -485,29 +485,21 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
         // A == up -> 1
         if(buffer[2] == 'A')
         {
-            printf("setting direction to 1\n");
-            mvprintw(LINES + 1, 0, "Setting direction to 1.\n.");
             data->direction = UP;
         }
         // B == down -> 3
         else if(buffer[2] == 'B')
         {
-            printf("setting direction to 3\n");
-            mvprintw(LINES + 1, 0, "Setting direction to 3.\n.");
             data->direction = DOWN;
         }
         // C == right -> 2
         else if(buffer[2] == 'C')
         {
-            printf("setting direction to 2\n");
-            mvprintw(LINES + 1, 0, "Setting direction to 2.\n.");
             data->direction = RIGHT;
         }
         // D == left -> 4
         else if(buffer[2] == 'D')
         {
-            printf("setting direction to 4\n");
-            mvprintw(LINES + 1, 0, "Setting direction to 4.\n.");
             data->direction = LEFT;
         }
         return PROCESS_KEYBOARD_INPUT;
@@ -517,21 +509,17 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
     {
         ssize_t bytes_received;
         // UDP packet received
-        printf("receiving\n");
         bytes_received = recvfrom(data->local_udp_socket, &received_int, sizeof(received_int), 0, (struct sockaddr *)&client_addr, &addr_len);
         if(bytes_received < 0)
         {
             perror("recvfrom");
             cleanup(data);
             printf("exiting due to recvfrom...\n");
-            sleep(TIMER_DELAY);
             return ERROR;
         }
 
         // Update program data with received integer
         data->received_value = ntohs(received_int);    // Convert from network byte order
-        printf("received value: %d\n", data->received_value);
-        sleep(ONE);
         return MOVE_REMOTE;
     }
 
@@ -554,12 +542,10 @@ static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struc
     if(exit_flag == 0)
     {
         int valid_direction = process_direction(data);
-        printf("processing keyboard input: %d\n", data->direction);
         if(valid_direction == -1)
         {
             return WAIT_FOR_INPUT;
         }
-        printf("moving local x = %d, y = %d\n", data->local_x, data->local_y);
         return MOVE_LOCAL;
     }
 
@@ -653,7 +639,6 @@ static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p1
     // Generate random direction: 0 = LEFT, 1 = RIGHT, 2 = UP, 3 = DOWN
     direction       = arc4random_uniform(4);
     data->direction = (int)direction + 1;
-    printf("moving direction = %d in timer move\n", data->direction);
     // Adjust position based on direction
     valid_direction = process_direction(data);
     if(valid_direction == -1)
@@ -661,7 +646,6 @@ static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p1
         return WAIT_FOR_INPUT;
     }
     // Trigger MOVE_LOCAL for valid moves
-    printf("triggering move_local from timer move with send_value %u\n", data->send_value);
     return MOVE_LOCAL;
 }
 
@@ -694,7 +678,6 @@ static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_erro
     program_data *data = ((program_data *)arg);
     P101_TRACE(env);
     wclear(data->win);
-    printf("move_remote called with received value %d\n", data->received_value);
 
     // I don't think we should actually need to keep the move on the board because the move should have been
     // validated on the sending side. But I kept in the checks minimally just in case
@@ -806,7 +789,6 @@ void send_udp_packet(const char *remote_ip, in_port_t remote_port, uint16_t send
             perror("Sendto failed");
             exit_flag = SIGINT;
         }
-        printf("Sent integer: %d\n", ntohs(send_value));
         // Close the socket
         close(sockfd);
     }
@@ -822,23 +804,23 @@ void setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, c
     if(inet_pton(AF_INET, address, &(((struct sockaddr_in *)addr)->sin_addr)) == 1)
     {
         struct sockaddr_in *ipv4_addr;
-        char                str[INET_ADDRSTRLEN];
+        //        char                str[INET_ADDRSTRLEN];
 
         ipv4_addr           = (struct sockaddr_in *)addr;
         addr->ss_family     = AF_INET;
         ipv4_addr->sin_port = net_port;
         *addr_len           = sizeof(struct sockaddr_in);
-        printf("IPv4 address: %s\n", inet_ntop(AF_INET, &(ipv4_addr->sin_addr), str, sizeof(str)));
+        //        printf("IPv4 address: %s\n", inet_ntop(AF_INET, &(ipv4_addr->sin_addr), str, sizeof(str)));
     }
     else if(inet_pton(AF_INET6, address, &(((struct sockaddr_in6 *)addr)->sin6_addr)) == 1)
     {
         struct sockaddr_in6 *ipv6_addr;
-        char                 str[INET6_ADDRSTRLEN];
+        //        char                 str[INET6_ADDRSTRLEN];
         ipv6_addr            = (struct sockaddr_in6 *)addr;
         addr->ss_family      = AF_INET6;
         ipv6_addr->sin6_port = net_port;
         *addr_len            = sizeof(struct sockaddr_in6);
-        printf("IPv6 address: %s\n", inet_ntop(AF_INET6, &(ipv6_addr->sin6_addr), str, sizeof(str)));
+        //        printf("IPv6 address: %s\n", inet_ntop(AF_INET6, &(ipv6_addr->sin6_addr), str, sizeof(str)));
     }
     else
     {
