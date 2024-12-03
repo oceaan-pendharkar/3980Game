@@ -31,7 +31,6 @@
 #define LINES 40
 #define COLS 40
 #define ONE 1
-#define SIX 6
 #define ZERO 0
 #define TIMER_DELAY 5
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
@@ -70,7 +69,6 @@ enum application_states
     PROCESS_KEYBOARD_INPUT,
     PROCESS_CONTROLLER_INPUT,
     PROCESS_TIMER_MOVE,
-    PROCESS_NETWORK_INPUT,
     MOVE_LOCAL,
     MOVE_REMOTE,
     ERROR
@@ -83,7 +81,6 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
 static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p101_error *err, void *arg);
-static p101_fsm_state_t process_network_input(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t state_error(const struct p101_env *env, struct p101_error *err, void *arg);
@@ -139,14 +136,12 @@ int main(int argc, char *argv[])
             {WAIT_FOR_INPUT,           PROCESS_KEYBOARD_INPUT,   process_keyboard_input  },
             {WAIT_FOR_INPUT,           PROCESS_CONTROLLER_INPUT, process_controller_input},
             {WAIT_FOR_INPUT,           PROCESS_TIMER_MOVE,       process_timer_move      },
-            {WAIT_FOR_INPUT,           PROCESS_NETWORK_INPUT,    process_network_input   },
+            {WAIT_FOR_INPUT,           MOVE_REMOTE,              move_remote             },
             {PROCESS_KEYBOARD_INPUT,   MOVE_LOCAL,               move_local              },
             {PROCESS_CONTROLLER_INPUT, MOVE_LOCAL,               move_local              },
             {PROCESS_TIMER_MOVE,       MOVE_LOCAL,               move_local              },
-            {PROCESS_NETWORK_INPUT,    MOVE_REMOTE,              move_remote             },
             {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
             {PROCESS_CONTROLLER_INPUT, WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
-            {PROCESS_NETWORK_INPUT,    WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
             {PROCESS_TIMER_MOVE,       WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
             {MOVE_LOCAL,               WAIT_FOR_INPUT,           wait_for_input          },
             {MOVE_REMOTE,              WAIT_FOR_INPUT,           wait_for_input          },
@@ -154,7 +149,6 @@ int main(int argc, char *argv[])
             {WAIT_FOR_INPUT,           ERROR,                    state_error             },
             {PROCESS_KEYBOARD_INPUT,   ERROR,                    state_error             },
             {PROCESS_CONTROLLER_INPUT, ERROR,                    state_error             },
-            {PROCESS_NETWORK_INPUT,    ERROR,                    state_error             },
             {MOVE_LOCAL,               ERROR,                    state_error             },
             {MOVE_REMOTE,              ERROR,                    state_error             },
             {WAIT_FOR_INPUT,           P101_FSM_EXIT,            NULL                    }, //  if we ask to exit (cntrl c?)
@@ -183,9 +177,11 @@ int main(int argc, char *argv[])
 static void parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data, int *err)
 {
     int opt;
-    data->remote_ip = NULL;
-    data->local_ip  = NULL;
-    opterr          = 0;
+    data->remote_ip   = NULL;
+    data->local_ip    = NULL;
+    data->local_port  = 0;
+    data->remote_port = 0;
+    opterr            = 0;
     while((opt = p101_getopt(env, argc, argv, "hbdwr:l:o:p:")) != -1)
     {
         switch(opt)
@@ -249,9 +245,9 @@ static void parse_arguments(const struct p101_env *env, int argc, char *argv[], 
             }
         }
     }
-    if(data->remote_ip == NULL || data->local_ip == NULL)
+    if(data->remote_ip == NULL || data->local_ip == NULL || data->remote_port == 0 || data->local_port == 0)
     {
-        usage(argv[0], EXIT_FAILURE, "SRC and Destination IP are required.");
+        usage(argv[0], EXIT_FAILURE, "SRC and Destination IPs and ports are required.");
     }
 
     if(optind < argc)
@@ -291,7 +287,6 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     socklen_t               addr_len;
     int                     ret_val = 0;
     data->direction                 = 0;
-    printf("setting up with local ip %s!\n", data->local_ip);
 
     setup_network_address(&server_addr, &addr_len, data->local_ip, data->local_port, &ret_val);
     if(ret_val != 0)
@@ -301,6 +296,7 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
         cleanup(data);
         return ERROR;
     }
+
     // set up socket for receiving packets
     data->local_udp_socket = socket(server_addr.ss_family, SOCK_DGRAM, 0);    // NOLINT(android-cloexec-socket)
     if(data->local_udp_socket < 0)
@@ -353,11 +349,15 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     curs_set(0);
 
     // creates the window
-    data->win      = newwin(lines, cols, local_y, local_x);
-    data->local_x  = ONE;
-    data->local_y  = ONE;
-    data->remote_x = SIX;
-    data->remote_y = SIX;
+    data->win     = newwin(lines, cols, local_y, local_x);
+    data->local_x = ONE;
+    data->local_y = ONE;
+
+    // I think the remote and local dots have to start in the same place or the logic doesn't make sense
+    // We can talk about this
+    data->remote_x = ONE;
+    data->remote_y = ONE;
+
     // refreshes the screen
     refresh();
     box(data->win, 0, 0);    // borders
@@ -381,6 +381,7 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
 
     // Setup for monitoring input with timeout
     fd_set             read_fds;
+    int                nfds = 0;
     struct timeval     timeout;
     int                retval;
     struct sockaddr_in client_addr;
@@ -407,38 +408,47 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
     }
     // timeout
     memset(&read_fds, 0, sizeof(read_fds));
+
     FD_SET(STDIN_FILENO, &read_fds);
+    FD_SET(data->local_udp_socket, &read_fds);
+    // TODO: JUSTIN!! FD_SET the controller file descriptor here so we can poll for it
+
     timeout.tv_sec  = TIMER_DELAY;
     timeout.tv_usec = 0;
 
-    // Triggers timer move unless something is pressed
-    retval = select(STDIN_FILENO + 1, &read_fds, NULL, NULL, &timeout);
+    // TODO: JUSTIN!!
+    // we have to set the number of fds being monitored to the highest fd val plus one!
+    // this calculation will change if we are also polling for a controller
+    nfds = (nfds > data->local_udp_socket ? nfds : data->local_udp_socket) + 1;
 
-    // Check for SDL controller events
-    //    while(SDL_PollEvent(&event))
-    //    {
-    //        if(event.type == SDL_CONTROLLERBUTTONDOWN)
-    //        {
-    //            printf("controller button pressed down\n");
-    //            // If directional button is pressed, transition to controller input state
-    //            switch(event.cbutton.button)
-    //            {
-    //                case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-    //                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-    //                case SDL_CONTROLLER_BUTTON_DPAD_UP:
-    //                case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-    //                    return PROCESS_CONTROLLER_INPUT;
-    //                default:
-    //                    break;
-    //            }
-    //        }
-    //    }
+    // Triggers timer move unless something is pressed
+    retval = select(nfds, &read_fds, NULL, NULL, &timeout);
+
+    // I commented this out just to rule out any weird things happening with memory... feel free to uncomment OF COURSE
+    //  Check for SDL controller events
+    //     while(SDL_PollEvent(&event))
+    //     {
+    //         if(event.type == SDL_CONTROLLERBUTTONDOWN)
+    //         {
+    //             printf("controller button pressed down\n");
+    //             // If directional button is pressed, transition to controller input state
+    //             switch(event.cbutton.button)
+    //             {
+    //                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+    //                 case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+    //                 case SDL_CONTROLLER_BUTTON_DPAD_UP:
+    //                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+    //                     return PROCESS_CONTROLLER_INPUT;
+    //                 default:
+    //                     break;
+    //             }
+    //         }
+    //     }
 
     if(retval == -1)
     {
         perror("select");
-        endwin();
-        close(data->local_udp_socket);
+        cleanup(data);
         printf("exiting due to select...\n");
         return ERROR;
     }
@@ -508,7 +518,6 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
         ssize_t bytes_received;
         // UDP packet received
         printf("receiving\n");
-        sleep(TIMER_DELAY);
         bytes_received = recvfrom(data->local_udp_socket, &received_int, sizeof(received_int), 0, (struct sockaddr *)&client_addr, &addr_len);
         if(bytes_received < 0)
         {
@@ -521,7 +530,9 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
 
         // Update program data with received integer
         data->received_value = ntohs(received_int);    // Convert from network byte order
-        return PROCESS_NETWORK_INPUT;
+        printf("received value: %d\n", data->received_value);
+        sleep(ONE);
+        return MOVE_REMOTE;
     }
 
     return WAIT_FOR_INPUT;
@@ -552,9 +563,7 @@ static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struc
         return MOVE_LOCAL;
     }
 
-    // deallocates memory and ends ncurses
-    endwin();
-    close(data->local_udp_socket);
+    cleanup(data);
     printf(" exiting...\n");
     return P101_FSM_EXIT;
 }
@@ -661,61 +670,6 @@ static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p1
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
-// In this function we will process network input and validate the move.
-// If the move is invalid, we will return WAIT_FOR_INPUT
-// If the move is valid, we will return MOVE_REMOTE
-static p101_fsm_state_t process_network_input(const struct p101_env *env, struct p101_error *err, void *arg)
-{
-    program_data *data;
-    P101_TRACE(env);
-    data = ((program_data *)arg);
-    printf("process_network_input called with remote_ip %s and received value %d\n", data->remote_ip, data->received_value);
-
-    switch(data->received_value)
-    {
-        case LEFT:
-            data->remote_x = data->remote_x - 1;
-            if(data->remote_x < 1)
-            {
-                data->remote_x = data->remote_x + 1;
-                return WAIT_FOR_INPUT;
-            }
-            break;
-        case RIGHT:
-            data->remote_x = data->remote_x + 1;
-            if(data->remote_x >= COLS - 1)
-            {
-                data->remote_x = data->remote_x - 1;
-                return WAIT_FOR_INPUT;
-            }
-            break;
-        case UP:
-            data->remote_y = data->remote_y - 1;
-            if(data->remote_y < 1)
-            {
-                data->remote_y = data->remote_y + 1;
-                return WAIT_FOR_INPUT;
-            }
-            break;
-        case DOWN:
-            data->remote_y = data->remote_y + 1;
-            if(data->remote_y >= COLS - 1)
-            {
-                data->remote_y = data->remote_y - 1;
-                return WAIT_FOR_INPUT;
-            }
-            break;
-        default:
-            break;
-    }
-    return MOVE_REMOTE;
-}
-
-#pragma GCC diagnostic pop
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
 // This function will do the move on the local machine
 static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error *err, void *arg)
 {
@@ -725,9 +679,7 @@ static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error
     wclear(data->win);
     mvwprintw(data->win, data->local_y, data->local_x, "*");
     mvwprintw(data->win, data->remote_y, data->remote_x, "@");
-    printf("sending udp packet...                         \n");    // the line needs to be this long to clear the other text
     send_udp_packet(data->remote_ip, data->remote_port, data->send_value);
-    sleep(2);    // for debugging
     return WAIT_FOR_INPUT;
 }
 
@@ -739,12 +691,49 @@ static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error
 // This function will do the move on the remote machine
 static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_error *err, void *arg)
 {
-    const program_data *data;
+    program_data *data = ((program_data *)arg);
     P101_TRACE(env);
-    data = ((program_data *)arg);
     wclear(data->win);
-    printf("move_remote called\n");
+    printf("move_remote called with received value %d\n", data->received_value);
+
+    // I don't think we should actually need to keep the move on the board because the move should have been
+    // validated on the sending side. But I kept in the checks minimally just in case
+    switch(data->received_value)
+    {
+        case 4:    // LEFT
+            data->remote_x = data->remote_x - 1;
+            if(data->remote_x < 1)
+            {
+                data->remote_x = data->remote_x + 1;
+            }
+            break;
+        case 2:    // RIGHT
+            data->remote_x = data->remote_x + 1;
+            if(data->remote_x >= COLS - 1)
+            {
+                data->remote_x = data->remote_x - 1;
+            }
+            break;
+        case 1:    // UP
+            data->remote_y = data->remote_y - 1;
+            if(data->remote_y < 1)
+            {
+                data->remote_y = data->remote_y + 1;
+            }
+            break;
+        case 3:    // DOWN
+            data->remote_y = data->remote_y + 1;
+            if(data->remote_y >= COLS - 1)
+            {
+                data->remote_y = data->remote_y - 1;
+            }
+            break;
+        default:
+            printf("unknown keyboard input\n");
+            sleep(2);
+    }
     mvwprintw(data->win, data->remote_y, data->remote_x, "@");
+    mvwprintw(data->win, data->local_y, data->local_x, "*");
     return WAIT_FOR_INPUT;
 }
 
