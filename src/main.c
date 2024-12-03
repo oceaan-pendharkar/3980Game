@@ -40,7 +40,7 @@
 #define DOWN 3
 #define LEFT 4
 
-#define PORT 12345
+#define PORT 12347
 
 typedef struct
 {
@@ -87,6 +87,8 @@ static void             setup_signal_handler(void);
 static void             sigint_handler(int signum);
 static void             send_udp_packet(const char *remote_ip, uint16_t send_value);
 void                    setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, const char *address, in_port_t port, int *err);
+void                    cleanup(program_data *data);
+int                     process_direction(program_data *data);
 
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
@@ -134,6 +136,7 @@ int main(int argc, char *argv[])
             {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
             {PROCESS_CONTROLLER_INPUT, WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
             {PROCESS_NETWORK_INPUT,    WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
+            {PROCESS_TIMER_MOVE,       WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
             {MOVE_LOCAL,               WAIT_FOR_INPUT,           wait_for_input          },
             {MOVE_REMOTE,              WAIT_FOR_INPUT,           wait_for_input          },
             {SETUP,                    ERROR,                    state_error             },
@@ -156,13 +159,12 @@ int main(int argc, char *argv[])
     curs_set(1);
     // deallocates memory and ends ncurses
     endwin();
-
     free(fsm_env);
     free(env);
     p101_error_reset(error);
     free(error);
 
-    SDL_Quit();
+    //    SDL_Quit();
 
     return EXIT_SUCCESS;
 }
@@ -275,16 +277,15 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     {
         printf("setup network address returned %d\n", ret_val);
         perror("Setup network address failed");
-        endwin();
-        close(data->local_udp_socket);
-        return P101_FSM_EXIT;
+        cleanup(data);
+        return ERROR;
     }
     // set up socket for receiving packets
     data->local_udp_socket = socket(server_addr.ss_family, SOCK_DGRAM, 0);    // NOLINT(android-cloexec-socket)
     if(data->local_udp_socket < 0)
     {
         perror("socket");
-        return P101_FSM_EXIT;
+        return ERROR;
     }
     printf("Socket created with fd: %d\n", data->local_udp_socket);
     // bind socket
@@ -292,9 +293,8 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     {
         P101_TRACE(env);
         perror("bind");
-        endwin();
-        close(data->local_udp_socket);
-        return P101_FSM_EXIT;
+        cleanup(data);
+        return ERROR;
     }
     printf("Socket bound to port %d\n", PORT);
     //    // Initialize SDL for controller input
@@ -437,18 +437,17 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
         if(bytes_read == -1)
         {
             perror("read");
-            endwin();
-            close(data->local_udp_socket);
+            cleanup(data);
             printf("exiting due to keyboard read...\n");
             return ERROR;
         }
-
+        buffer[bytes_read] = '\0';
         if(buffer[0] == '\x03')
         {
             printf("Ctrl+C detected, exiting gracefully.\n");
             perror("sigint");
-            endwin();
-            close(data->local_udp_socket);
+            cleanup(data);
+            exit_flag = SIGINT;
             return ERROR;
         }
 
@@ -488,13 +487,14 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
         ssize_t bytes_received;
         // UDP packet received
         printf("receiving\n");
+        sleep(TIMER_DELAY);
         bytes_received = recvfrom(data->local_udp_socket, &received_int, sizeof(received_int), 0, (struct sockaddr *)&client_addr, &addr_len);
         if(bytes_received < 0)
         {
             perror("recvfrom");
-            endwin();
-            close(data->local_udp_socket);
+            cleanup(data);
             printf("exiting due to recvfrom...\n");
+            sleep(TIMER_DELAY);
             return ERROR;
         }
 
@@ -514,61 +514,18 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
 // If the move is valie, we will return MOVE_LOCAL
 static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg)
 {
-    program_data *data;
+    program_data *data = ((program_data *)arg);
     P101_TRACE(env);
-    data = ((program_data *)arg);
     box(data->win, ZERO, ZERO);    // borders
     wrefresh(data->win);
     // gets input from the keyboard into the program data somehow
     if(exit_flag == 0)
     {
+        int valid_direction = process_direction(data);
         printf("processing keyboard input: %d\n", data->direction);
-        switch(data->direction)
+        if(valid_direction == -1)
         {
-            case 4:    // LEFT
-                data->local_x = data->local_x - 1;
-                if(data->local_x < 1)
-                {
-                    data->local_x      = data->local_x + 1;
-                    data->invalid_move = true;
-                    return WAIT_FOR_INPUT;
-                }
-                data->send_value = htons(LEFT);    // serialized integer
-                break;
-            case 2:    // RIGHT
-                data->local_x = data->local_x + 1;
-                if(data->local_x >= COLS - 1)
-                {
-                    data->local_x      = data->local_x - 1;
-                    data->invalid_move = true;
-                    return WAIT_FOR_INPUT;
-                }
-                data->send_value = htons(RIGHT);    // serialized integer
-                break;
-            case 1:    // UP
-                data->local_y = data->local_y - 1;
-                if(data->local_y < 1)
-                {
-                    data->local_y      = data->local_y + 1;
-                    data->invalid_move = true;
-                    return WAIT_FOR_INPUT;
-                }
-                data->send_value = htons(UP);    // serialized integer
-                break;
-            case 3:    // DOWN
-                data->local_y = data->local_y + 1;
-                if(data->local_y >= COLS - 1)
-                {
-                    data->local_y      = data->local_y - 1;
-                    data->invalid_move = true;
-                    return WAIT_FOR_INPUT;
-                }
-                data->send_value = htons(DOWN);    // serialized integer
-                break;
-            default:
-                printf("unknown keyboard input\n");
-                sleep(2);
-                return WAIT_FOR_INPUT;
+            return WAIT_FOR_INPUT;
         }
         printf("moving local x = %d, y = %d\n", data->local_x, data->local_y);
         return MOVE_LOCAL;
@@ -658,62 +615,23 @@ static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p1
 {
     uint32_t      direction;
     program_data *data = ((program_data *)arg);
+    int           valid_direction;
     P101_TRACE(env);
     box(data->win, ZERO, ZERO);
     wrefresh(data->win);
 
     // Generate random direction: 0 = LEFT, 1 = RIGHT, 2 = UP, 3 = DOWN
-    direction = arc4random_uniform(4);
-    printf("moving direction = %u in timer move\n", direction);
+    direction       = arc4random_uniform(4);
+    data->direction = (int)direction + 1;
+    printf("moving direction = %d in timer move\n", data->direction);
     // Adjust position based on direction
-    switch(direction)
+    valid_direction = process_direction(data);
+    if(valid_direction == -1)
     {
-        case 0:    // LEFT
-            data->local_x--;
-            if(data->local_x < 1)
-            {
-                data->local_x++;
-                data->invalid_move = true;
-                return WAIT_FOR_INPUT;
-            }
-            data->send_value = htons(LEFT);    // serialized integer
-            break;
-        case 1:    // RIGHT
-            data->local_x++;
-            if(data->local_x >= COLS - 1)
-            {
-                data->local_x--;
-                data->invalid_move = true;
-                return WAIT_FOR_INPUT;
-            }
-            data->send_value = htons(RIGHT);    // serialized integer
-            break;
-        case 2:    // UP
-            data->local_y--;
-            if(data->local_y < 1)
-            {
-                data->local_y++;
-                data->invalid_move = true;
-                return WAIT_FOR_INPUT;
-            }
-            data->send_value = htons(UP);    // serialized integer
-            break;
-        case 3:    // DOWN
-            data->local_y++;
-            if(data->local_y >= LINES - 1)
-            {
-                data->local_y--;
-                data->invalid_move = true;
-                return WAIT_FOR_INPUT;
-            }
-            data->send_value = htons(DOWN);    // serialized integer
-            break;
-        default:
-            break;
+        return WAIT_FOR_INPUT;
     }
-
     // Trigger MOVE_LOCAL for valid moves
-    printf("triggering move_local from timer move\n");
+    printf("triggering move_local from timer move with send_value %u\n", data->send_value);
     return MOVE_LOCAL;
 }
 
@@ -730,7 +648,7 @@ static p101_fsm_state_t process_network_input(const struct p101_env *env, struct
     program_data *data;
     P101_TRACE(env);
     data = ((program_data *)arg);
-    printf("process_network_input called with remote_ip%s\n", data->remote_ip);
+    printf("process_network_input called with remote_ip %s and received value %d\n", data->remote_ip, data->received_value);
 
     switch(data->received_value)
     {
@@ -804,6 +722,7 @@ static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_erro
     P101_TRACE(env);
     data = ((program_data *)arg);
     wclear(data->win);
+    printf("move_remote called\n");
     mvwprintw(data->win, data->remote_y, data->remote_x, "@");
     return WAIT_FOR_INPUT;
 }
@@ -916,4 +835,72 @@ void setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, c
         fprintf(stderr, "%s is not an IPv4 or an IPv6 address\n", address);
         *err = errno;
     }
+}
+
+void cleanup(program_data *data)
+{
+    if(data->win)
+    {
+        delwin(data->win);
+    }
+    if(data->controller)
+    {
+        SDL_GameControllerClose(data->controller);
+    }
+    if(data->local_udp_socket >= 0)
+    {
+        close(data->local_udp_socket);
+    }
+}
+
+int process_direction(program_data *data)
+{
+    switch(data->direction)
+    {
+        case 4:    // LEFT
+            data->local_x = data->local_x - 1;
+            if(data->local_x < 1)
+            {
+                data->local_x      = data->local_x + 1;
+                data->invalid_move = true;
+                return -1;
+            }
+            data->send_value = htons(LEFT);    // serialized integer
+            break;
+        case 2:    // RIGHT
+            data->local_x = data->local_x + 1;
+            if(data->local_x >= COLS - 1)
+            {
+                data->local_x      = data->local_x - 1;
+                data->invalid_move = true;
+                return -1;
+            }
+            data->send_value = htons(RIGHT);    // serialized integer
+            break;
+        case 1:    // UP
+            data->local_y = data->local_y - 1;
+            if(data->local_y < 1)
+            {
+                data->local_y      = data->local_y + 1;
+                data->invalid_move = true;
+                return -1;
+            }
+            data->send_value = htons(UP);    // serialized integer
+            break;
+        case 3:    // DOWN
+            data->local_y = data->local_y + 1;
+            if(data->local_y >= COLS - 1)
+            {
+                data->local_y      = data->local_y - 1;
+                data->invalid_move = true;
+                return -1;
+            }
+            data->send_value = htons(DOWN);    // serialized integer
+            break;
+        default:
+            printf("unknown keyboard input\n");
+            sleep(2);
+            return -1;
+    }
+    return 0;
 }
