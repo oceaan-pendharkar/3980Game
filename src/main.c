@@ -39,8 +39,10 @@
 #define RIGHT 2
 #define DOWN 3
 #define LEFT 4
-
-#define PORT 12347
+#define ERR_NONE 0
+#define ERR_NO_DIGITS 1
+#define ERR_OUT_OF_RANGE 2
+#define ERR_INVALID_CHARS 3
 
 typedef struct
 {
@@ -57,6 +59,8 @@ typedef struct
     uint16_t            received_value;
     uint16_t            send_value;
     int                 direction;
+    in_port_t           local_port;
+    in_port_t           remote_port;
 } program_data;
 
 enum application_states
@@ -72,7 +76,7 @@ enum application_states
     ERROR
 };
 
-static void             parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data);
+static void             parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data, int *err);
 _Noreturn static void   usage(const char *program_name, int exit_code, const char *message);
 static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg);
@@ -85,10 +89,11 @@ static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_erro
 static p101_fsm_state_t state_error(const struct p101_env *env, struct p101_error *err, void *arg);
 static void             setup_signal_handler(void);
 static void             sigint_handler(int signum);
-static void             send_udp_packet(const char *remote_ip, uint16_t send_value);
+static void             send_udp_packet(const char *remote_ip, in_port_t remote_port, uint16_t send_value);
 void                    setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, const char *address, in_port_t port, int *err);
 void                    cleanup(program_data *data);
 int                     process_direction(program_data *data);
+in_port_t               convert_port(const char *str, int *err);
 
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
@@ -103,6 +108,7 @@ int main(int argc, char *argv[])
     struct p101_env      *fsm_env;
     struct p101_fsm_info *fsm;
     program_data          data;
+    int                   err = 0;
 
     error = p101_error_create(false);
     env   = p101_env_create(error, true, NULL);
@@ -110,7 +116,12 @@ int main(int argc, char *argv[])
     will  = false;
     did   = false;
     setup_signal_handler();
-    parse_arguments(env, argc, argv, &bad, &will, &did, &data);
+    parse_arguments(env, argc, argv, &bad, &will, &did, &data, &err);
+    if(err != 0)
+    {
+        perror("port");
+        return -1;
+    }
     printf("Dest IP address: %s\n", data.remote_ip);
     fsm_error = p101_error_create(false);
     fsm_env   = p101_env_create(error, true, NULL);
@@ -169,13 +180,13 @@ int main(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
-static void parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data)
+static void parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data, int *err)
 {
     int opt;
     data->remote_ip = NULL;
     data->local_ip  = NULL;
     opterr          = 0;
-    while((opt = p101_getopt(env, argc, argv, "hbdwr:l:")) != -1)
+    while((opt = p101_getopt(env, argc, argv, "hbdwr:l:o:p:")) != -1)
     {
         switch(opt)
         {
@@ -187,6 +198,16 @@ static void parse_arguments(const struct p101_env *env, int argc, char *argv[], 
             case 'l':
             {
                 data->local_ip = optarg;
+                break;
+            }
+            case 'p':
+            {
+                data->local_port = convert_port(optarg, err);
+                break;
+            }
+            case 'o':
+            {
+                data->remote_port = convert_port(optarg, err);
                 break;
             }
             case 'b':
@@ -246,7 +267,7 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
         fprintf(stderr, "%s\n", message);
     }
 
-    fprintf(stderr, "Usage: %s -l <local ip addr> - r <remote ip addr> [-h] [-b] [-d] [-w]\n", program_name);
+    fprintf(stderr, "Usage: %s -l <local ip addr> - r <remote ip addr> -p <local port> -o <remote port>[-h] [-b] [-d] [-w]\n", program_name);
     fputs("Options:\n", stderr);
     fputs("  -h   Display this help message\n", stderr);
     fputs("  -b   Display 'bad' transitions\n", stderr);
@@ -272,7 +293,7 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     data->direction                 = 0;
     printf("setting up with local ip %s!\n", data->local_ip);
 
-    setup_network_address(&server_addr, &addr_len, data->local_ip, PORT, &ret_val);
+    setup_network_address(&server_addr, &addr_len, data->local_ip, data->local_port, &ret_val);
     if(ret_val != 0)
     {
         printf("setup network address returned %d\n", ret_val);
@@ -296,7 +317,7 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
         cleanup(data);
         return ERROR;
     }
-    printf("Socket bound to port %d\n", PORT);
+    printf("Socket bound to port %d\n", data->local_port);
     //    // Initialize SDL for controller input
     //    if(SDL_Init(SDL_INIT_GAMECONTROLLER) != 0)
     //    {
@@ -705,7 +726,7 @@ static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error
     mvwprintw(data->win, data->local_y, data->local_x, "*");
     mvwprintw(data->win, data->remote_y, data->remote_x, "@");
     printf("sending udp packet...                         \n");    // the line needs to be this long to clear the other text
-    send_udp_packet(data->remote_ip, data->send_value);
+    send_udp_packet(data->remote_ip, data->remote_port, data->send_value);
     sleep(2);    // for debugging
     return WAIT_FOR_INPUT;
 }
@@ -767,14 +788,14 @@ static void sigint_handler(int signum)
 
 #pragma GCC diagnostic pop
 
-void send_udp_packet(const char *remote_ip, uint16_t send_value)
+void send_udp_packet(const char *remote_ip, in_port_t remote_port, uint16_t send_value)
 {
     int                     sockfd;
     struct sockaddr_storage dest_addr;
     socklen_t               addr_len;
     int                     ret_val = 0;
 
-    setup_network_address(&dest_addr, &addr_len, remote_ip, PORT, &ret_val);
+    setup_network_address(&dest_addr, &addr_len, remote_ip, remote_port, &ret_val);
     if(ret_val != 0)
     {
         perror("Setup network address failed");
@@ -903,4 +924,42 @@ int process_direction(program_data *data)
             return -1;
     }
     return 0;
+}
+
+in_port_t convert_port(const char *str, int *err)
+{
+    in_port_t port;
+    char     *endptr;
+    long      val;
+
+    *err  = ERR_NONE;
+    port  = 0;
+    errno = 0;
+    val   = strtol(str, &endptr, 10);    // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+
+    // Check if no digits were found
+    if(endptr == str)
+    {
+        *err = ERR_NO_DIGITS;
+        goto done;
+    }
+
+    // Check for out-of-range errors
+    if(val < 0 || val > UINT16_MAX)
+    {
+        *err = ERR_OUT_OF_RANGE;
+        goto done;
+    }
+
+    // Check for trailing invalid characters
+    if(*endptr != '\0')
+    {
+        *err = ERR_INVALID_CHARS;
+        goto done;
+    }
+
+    port = (in_port_t)val;
+
+done:
+    return port;
 }
