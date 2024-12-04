@@ -91,6 +91,7 @@ void                    setup_network_address(struct sockaddr_storage *addr, soc
 void                    cleanup(program_data *data);
 int                     process_direction(program_data *data);
 in_port_t               convert_port(const char *str, int *err);
+int                     socket_connect(const program_data *data);
 
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
@@ -278,42 +279,14 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
 // This is our setup function
 static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err, void *arg)
 {
-    int                     lines   = LINES;
-    int                     cols    = COLS;
-    int                     local_y = 1;
-    int                     local_x = 1;
-    program_data           *data    = ((program_data *)arg);
-    struct sockaddr_storage server_addr;
-    socklen_t               addr_len;
-    int                     ret_val = 0;
-    data->direction                 = 0;
+    int           lines   = LINES;
+    int           cols    = COLS;
+    int           local_y = 1;
+    int           local_x = 1;
+    program_data *data    = ((program_data *)arg);
+    int           check   = 0;
+    data->direction       = 0;
 
-    setup_network_address(&server_addr, &addr_len, data->local_ip, data->local_port, &ret_val);
-    if(ret_val != 0)
-    {
-        printf("setup network address returned %d\n", ret_val);
-        perror("Setup network address failed");
-        cleanup(data);
-        return ERROR;
-    }
-
-    // set up socket for receiving packets
-    data->local_udp_socket = socket(server_addr.ss_family, SOCK_DGRAM, 0);    // NOLINT(android-cloexec-socket)
-    if(data->local_udp_socket < 0)
-    {
-        perror("socket");
-        return ERROR;
-    }
-    printf("Socket created with fd: %d\n", data->local_udp_socket);
-    // bind socket
-    if(bind(data->local_udp_socket, (struct sockaddr *)&server_addr, addr_len) < 0)
-    {
-        P101_TRACE(env);
-        perror("bind");
-        cleanup(data);
-        return ERROR;
-    }
-    printf("Socket bound to port %d\n", data->local_port);
     //    // Initialize SDL for controller input
     //    if(SDL_Init(SDL_INIT_GAMECONTROLLER) != 0)
     //    {
@@ -367,8 +340,21 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     mvwprintw(data->win, data->remote_y, data->remote_x, "@");
 
     wrefresh(data->win);
+
+    check = socket_connect(data);
+    if(check < 0)
+    {
+        perror("socket_connect");
+        cleanup(data);
+        return ERROR;
+    }
+
+    data->local_udp_socket = check;
+
     return WAIT_FOR_INPUT;
 }
+
+#pragma GCC diagnostic pop
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -842,6 +828,7 @@ void cleanup(program_data *data)
     if(data->local_udp_socket >= 0)
     {
         close(data->local_udp_socket);
+        data->local_udp_socket = -1;
     }
 }
 
@@ -933,4 +920,38 @@ in_port_t convert_port(const char *str, int *err)
 
 done:
     return port;
+}
+
+int socket_connect(const program_data *data)
+{
+    struct sockaddr_storage server_addr;
+    socklen_t               addr_len;
+    int                     sock;
+    int                     ret_val = 0;
+    setup_network_address(&server_addr, &addr_len, data->local_ip, data->local_port, &ret_val);
+    if(ret_val != 0)
+    {
+        perror("Setup network address failed");
+        return -1;
+    }
+
+    // set up socket for receiving packets
+    sock = socket(server_addr.ss_family, SOCK_DGRAM, 0);    // NOLINT(android-cloexec-socket)
+
+    if(sock < 0)
+    {
+        perror("socket");
+        return -1;
+    }
+    printf("Socket created with fd: %d\n", sock);
+
+    // bind socket
+    if(bind(sock, (struct sockaddr *)&server_addr, addr_len) < 0)
+    {
+        perror("bind");
+        close(sock);
+        return -1;
+    }
+    printf("Socket bound to port %d\n", data->local_port);
+    return sock;
 }
