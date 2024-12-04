@@ -408,7 +408,7 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
     memset(&read_fds, 0, sizeof(read_fds));
 
     FD_SET(STDIN_FILENO, &read_fds);
-    FD_SET(data->local_udp_socket, &read_fds);
+    FD_SET((long unsigned int)data->local_udp_socket, &read_fds);
     // TODO: JUSTIN!! FD_SET the controller file descriptor here so we can poll for it
 
     timeout.tv_sec  = TIMER_DELAY;
@@ -503,7 +503,7 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
         return PROCESS_KEYBOARD_INPUT;
     }
 
-    if(FD_ISSET(data->local_udp_socket, &read_fds))
+    if(FD_ISSET((long unsigned int)data->local_udp_socket, &read_fds))
     {
         ssize_t bytes_received;
         // UDP packet received
