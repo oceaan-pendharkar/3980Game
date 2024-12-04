@@ -401,7 +401,7 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
     }
     else
     {
-        mvprintw(LINES + 1, 0, "");
+        mvprintw(LINES + 1, 0, " ");
         mvprintw(LINES + 1, 0, "Hit arrow keys or your controller to move.");
         box(data->win, ZERO, ZERO);    // borders
         wrefresh(data->win);
