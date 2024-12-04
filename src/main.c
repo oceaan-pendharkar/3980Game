@@ -836,10 +836,12 @@ void cleanup(program_data *data)
     {
         delwin(data->win);
     }
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
     if(data->controller)
     {
         SDL_GameControllerClose(data->controller);
     }
+#endif
     if(data->local_udp_socket >= 0)
     {
         close(data->local_udp_socket);
