@@ -6,7 +6,9 @@
     #pragma clang diagnostic ignored "-Wreserved-identifier"
     #pragma clang diagnostic ignored "-Wdocumentation-unknown-command"
 #endif
-#include <SDL2/SDL.h>
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
+    #include <SDL2/SDL.h>
+#endif
 #pragma GCC diagnostic pop
 #ifdef __clang__
     #pragma clang diagnostic pop
@@ -45,21 +47,23 @@
 
 typedef struct
 {
-    char               *remote_ip;
-    char               *local_ip;
-    WINDOW             *win;
-    bool                invalid_move;
-    int                 local_y;
-    int                 local_x;
-    int                 remote_y;
-    int                 remote_x;
+    char   *remote_ip;
+    char   *local_ip;
+    WINDOW *win;
+    bool    invalid_move;
+    int     local_y;
+    int     local_x;
+    int     remote_y;
+    int     remote_x;
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
     SDL_GameController *controller;
-    int                 local_udp_socket;
-    uint16_t            received_value;
-    uint16_t            send_value;
-    int                 direction;
-    in_port_t           local_port;
-    in_port_t           remote_port;
+#endif
+    int       local_udp_socket;
+    uint16_t  received_value;
+    uint16_t  send_value;
+    int       direction;
+    in_port_t local_port;
+    in_port_t remote_port;
 } program_data;
 
 enum application_states
@@ -79,7 +83,9 @@ _Noreturn static void   usage(const char *program_name, int exit_code, const cha
 static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg);
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
 static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg);
+#endif
 static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_error *err, void *arg);
@@ -135,21 +141,27 @@ int main(int argc, char *argv[])
             {P101_FSM_INIT,            SETUP,                    setup                   },
             {SETUP,                    WAIT_FOR_INPUT,           wait_for_input          },
             {WAIT_FOR_INPUT,           PROCESS_KEYBOARD_INPUT,   process_keyboard_input  },
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
             {WAIT_FOR_INPUT,           PROCESS_CONTROLLER_INPUT, process_controller_input},
+#endif
             {WAIT_FOR_INPUT,           PROCESS_TIMER_MOVE,       process_timer_move      },
             {WAIT_FOR_INPUT,           MOVE_REMOTE,              move_remote             },
             {PROCESS_KEYBOARD_INPUT,   MOVE_LOCAL,               move_local              },
             {PROCESS_CONTROLLER_INPUT, MOVE_LOCAL,               move_local              },
             {PROCESS_TIMER_MOVE,       MOVE_LOCAL,               move_local              },
             {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
             {PROCESS_CONTROLLER_INPUT, WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
+#endif
             {PROCESS_TIMER_MOVE,       WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
             {MOVE_LOCAL,               WAIT_FOR_INPUT,           wait_for_input          },
             {MOVE_REMOTE,              WAIT_FOR_INPUT,           wait_for_input          },
             {SETUP,                    ERROR,                    state_error             },
             {WAIT_FOR_INPUT,           ERROR,                    state_error             },
             {PROCESS_KEYBOARD_INPUT,   ERROR,                    state_error             },
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
             {PROCESS_CONTROLLER_INPUT, ERROR,                    state_error             },
+#endif
             {MOVE_LOCAL,               ERROR,                    state_error             },
             {MOVE_REMOTE,              ERROR,                    state_error             },
             {WAIT_FOR_INPUT,           P101_FSM_EXIT,            NULL                    }, //  if we ask to exit (cntrl c?)
@@ -264,7 +276,7 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
         fprintf(stderr, "%s\n", message);
     }
 
-    fprintf(stderr, "Usage: %s -l <local ip addr> - r <remote ip addr> -p <local port> -o <remote port>[-h] [-b] [-d] [-w]\n", program_name);
+    fprintf(stderr, "Usage: %s -l <local ip addr> -r <remote ip addr> -p <local port> -o <remote port>[-h] [-b] [-d] [-w]\n", program_name);
     fputs("Options:\n", stderr);
     fputs("  -h   Display this help message\n", stderr);
     fputs("  -b   Display 'bad' transitions\n", stderr);
@@ -545,6 +557,8 @@ static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struc
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
+
 // Notes for PS4: Left = 13, Right = 14, Up = 11, Down = 12
 static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg)
 {
@@ -607,6 +621,7 @@ static p101_fsm_state_t process_controller_input(const struct p101_env *env, str
 
     return WAIT_FOR_INPUT;
 }
+#endif
 
 #pragma GCC diagnostic pop
 
