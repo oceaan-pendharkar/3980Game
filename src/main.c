@@ -949,6 +949,7 @@ int socket_connect(const program_data *data)
     if(ret_val != 0)
     {
         perror("Setup network address failed");
+        cleanup(data);
         return -1;
     }
 
