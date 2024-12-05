@@ -834,7 +834,7 @@ void cleanup(program_data *data)
 {
     if(data->win)
     {
-        delwin(data->win);
+        endwin();
     }
 #if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
     if(data->controller)
