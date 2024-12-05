@@ -40,6 +40,7 @@
 #define RIGHT 2
 #define DOWN 3
 #define LEFT 4
+#define NONE 100
 #define ERR_NONE 0
 #define ERR_NO_DIGITS 1
 #define ERR_OUT_OF_RANGE 2
@@ -500,6 +501,11 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
         {
             data->direction = LEFT;
         }
+
+        else
+        {
+            data->direction = NONE;
+        }
         return PROCESS_KEYBOARD_INPUT;
     }
 
@@ -949,7 +955,6 @@ int socket_connect(const program_data *data)
     if(ret_val != 0)
     {
         perror("Setup network address failed");
-        cleanup(data);
         return -1;
     }
 
