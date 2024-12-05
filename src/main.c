@@ -826,7 +826,7 @@ void setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, c
     else
     {
         fprintf(stderr, "%s is not an IPv4 or an IPv6 address\n", address);
-        *err = errno;
+        *err = -1;
     }
 }
 
