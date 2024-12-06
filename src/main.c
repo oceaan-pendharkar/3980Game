@@ -137,25 +137,25 @@ int main(int argc, char *argv[])
     else
     {
         static struct p101_fsm_transition transitions[] = {
-            {P101_FSM_INIT,            SETUP,                  setup                 },
-            {SETUP,                    WAIT_FOR_INPUT,         wait_for_input        },
-            {WAIT_FOR_INPUT,           PROCESS_KEYBOARD_INPUT, process_keyboard_input},
-            {WAIT_FOR_INPUT,           PROCESS_TIMER_MOVE,     process_timer_move    },
-            {WAIT_FOR_INPUT,           MOVE_REMOTE,            move_remote           },
-            {PROCESS_KEYBOARD_INPUT,   MOVE_LOCAL,             move_local            },
-            {PROCESS_TIMER_MOVE,       MOVE_LOCAL,             move_local            },
-            {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
-            {PROCESS_TIMER_MOVE,       WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
-            {MOVE_LOCAL,               WAIT_FOR_INPUT,         wait_for_input        },
-            {MOVE_REMOTE,              WAIT_FOR_INPUT,         wait_for_input        },
-            {SETUP,                    ERROR,                  state_error           },
-            {WAIT_FOR_INPUT,           ERROR,                  state_error           },
-            {PROCESS_KEYBOARD_INPUT,   ERROR,                  state_error           },
-            {PROCESS_TIMER_MOVE,	   ERROR,				   state_error			 },
-            {MOVE_LOCAL,               ERROR,                  state_error           },
-            {MOVE_REMOTE,              ERROR,                  state_error           },
-            {WAIT_FOR_INPUT,           P101_FSM_EXIT,          NULL                  }, //  if we ask to exit (cntrl c?)
-            {ERROR,                    P101_FSM_EXIT,          NULL                  }
+            {P101_FSM_INIT,          SETUP,                  setup                 },
+            {SETUP,                  WAIT_FOR_INPUT,         wait_for_input        },
+            {WAIT_FOR_INPUT,         PROCESS_KEYBOARD_INPUT, process_keyboard_input},
+            {WAIT_FOR_INPUT,         PROCESS_TIMER_MOVE,     process_timer_move    },
+            {WAIT_FOR_INPUT,         MOVE_REMOTE,            move_remote           },
+            {PROCESS_KEYBOARD_INPUT, MOVE_LOCAL,             move_local            },
+            {PROCESS_TIMER_MOVE,     MOVE_LOCAL,             move_local            },
+            {PROCESS_KEYBOARD_INPUT, WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
+            {PROCESS_TIMER_MOVE,     WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
+            {MOVE_LOCAL,             WAIT_FOR_INPUT,         wait_for_input        },
+            {MOVE_REMOTE,            WAIT_FOR_INPUT,         wait_for_input        },
+            {SETUP,                  ERROR,                  state_error           },
+            {WAIT_FOR_INPUT,         ERROR,                  state_error           },
+            {PROCESS_KEYBOARD_INPUT, ERROR,                  state_error           },
+            {PROCESS_TIMER_MOVE,     ERROR,                  state_error           },
+            {MOVE_LOCAL,             ERROR,                  state_error           },
+            {MOVE_REMOTE,            ERROR,                  state_error           },
+            {WAIT_FOR_INPUT,         P101_FSM_EXIT,          NULL                  }, //  if we ask to exit (cntrl c?)
+            {ERROR,                  P101_FSM_EXIT,          NULL                  }
         };
         p101_fsm_state_t from_state;
         p101_fsm_state_t to_state;
@@ -558,7 +558,7 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
             perror("sigint");
             cleanup(data);
             exit_flag = SIGINT;
-            return ERROR;
+            return P101_FSM_EXIT;
         }
 
         // A == up -> 1
