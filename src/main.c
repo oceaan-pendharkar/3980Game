@@ -79,26 +79,25 @@ enum application_states
     ERROR
 };
 
-static void             parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data, int *err);
-_Noreturn static void   usage(const char *program_name, int exit_code, const char *message);
+static void           parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data, int *err);
+_Noreturn static void usage(const char *program_name, int exit_code, const char *message);
+
+static void setup_signal_handler(void);
+static void sigint_handler(int signum);
+void        setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, const char *address, in_port_t port, int *err);
+int         process_direction(program_data *data);
+in_port_t   convert_port(const char *str, int *err);
+int         socket_connect(const program_data *data);
+
 static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg);
-#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
-static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg);
-#endif
 static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t state_error(const struct p101_env *env, struct p101_error *err, void *arg);
-static void             setup_signal_handler(void);
-static void             sigint_handler(int signum);
 static void             send_udp_packet(const char *remote_ip, in_port_t remote_port, uint16_t send_value);
-void                    setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, const char *address, in_port_t port, int *err);
 void                    cleanup(program_data *data);
-int                     process_direction(program_data *data);
-in_port_t               convert_port(const char *str, int *err);
-int                     socket_connect(const program_data *data);
 
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
@@ -139,34 +138,31 @@ int main(int argc, char *argv[])
     else
     {
         static struct p101_fsm_transition transitions[] = {
-            {P101_FSM_INIT,            SETUP,                    setup                   },
-            {SETUP,                    WAIT_FOR_INPUT,           wait_for_input          },
-            {WAIT_FOR_INPUT,           PROCESS_KEYBOARD_INPUT,   process_keyboard_input  },
+            {P101_FSM_INIT,            SETUP,                  setup                 },
+            {SETUP,                    WAIT_FOR_INPUT,         wait_for_input        },
+            {WAIT_FOR_INPUT,           PROCESS_KEYBOARD_INPUT, process_keyboard_input},
+            {WAIT_FOR_INPUT,           PROCESS_TIMER_MOVE,     process_timer_move    },
+            {WAIT_FOR_INPUT,           MOVE_REMOTE,            move_remote           },
+            {PROCESS_KEYBOARD_INPUT,   MOVE_LOCAL,             move_local            },
+            {PROCESS_CONTROLLER_INPUT, MOVE_LOCAL,             move_local            },
+            {PROCESS_TIMER_MOVE,       MOVE_LOCAL,             move_local            },
+            {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
 #if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
-            {WAIT_FOR_INPUT,           PROCESS_CONTROLLER_INPUT, process_controller_input},
+            {PROCESS_CONTROLLER_INPUT, WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
 #endif
-            {WAIT_FOR_INPUT,           PROCESS_TIMER_MOVE,       process_timer_move      },
-            {WAIT_FOR_INPUT,           MOVE_REMOTE,              move_remote             },
-            {PROCESS_KEYBOARD_INPUT,   MOVE_LOCAL,               move_local              },
-            {PROCESS_CONTROLLER_INPUT, MOVE_LOCAL,               move_local              },
-            {PROCESS_TIMER_MOVE,       MOVE_LOCAL,               move_local              },
-            {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
+            {PROCESS_TIMER_MOVE,       WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
+            {MOVE_LOCAL,               WAIT_FOR_INPUT,         wait_for_input        },
+            {MOVE_REMOTE,              WAIT_FOR_INPUT,         wait_for_input        },
+            {SETUP,                    ERROR,                  state_error           },
+            {WAIT_FOR_INPUT,           ERROR,                  state_error           },
+            {PROCESS_KEYBOARD_INPUT,   ERROR,                  state_error           },
 #if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
-            {PROCESS_CONTROLLER_INPUT, WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
+            {PROCESS_CONTROLLER_INPUT, ERROR,                  state_error           },
 #endif
-            {PROCESS_TIMER_MOVE,       WAIT_FOR_INPUT,           wait_for_input          }, //  if validation fails
-            {MOVE_LOCAL,               WAIT_FOR_INPUT,           wait_for_input          },
-            {MOVE_REMOTE,              WAIT_FOR_INPUT,           wait_for_input          },
-            {SETUP,                    ERROR,                    state_error             },
-            {WAIT_FOR_INPUT,           ERROR,                    state_error             },
-            {PROCESS_KEYBOARD_INPUT,   ERROR,                    state_error             },
-#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
-            {PROCESS_CONTROLLER_INPUT, ERROR,                    state_error             },
-#endif
-            {MOVE_LOCAL,               ERROR,                    state_error             },
-            {MOVE_REMOTE,              ERROR,                    state_error             },
-            {WAIT_FOR_INPUT,           P101_FSM_EXIT,            NULL                    }, //  if we ask to exit (cntrl c?)
-            {ERROR,                    P101_FSM_EXIT,            NULL                    }
+            {MOVE_LOCAL,               ERROR,                  state_error           },
+            {MOVE_REMOTE,              ERROR,                  state_error           },
+            {WAIT_FOR_INPUT,           P101_FSM_EXIT,          NULL                  }, //  if we ask to exit (cntrl c?)
+            {ERROR,                    P101_FSM_EXIT,          NULL                  }
         };
         p101_fsm_state_t from_state;
         p101_fsm_state_t to_state;
@@ -182,6 +178,7 @@ int main(int argc, char *argv[])
     free(env);
     p101_error_reset(error);
     free(error);
+    free(fsm_error);
 
     //    SDL_Quit();
 
@@ -286,461 +283,6 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
     exit(exit_code);
 }
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-// This is our setup function
-static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err, void *arg)
-{
-    int           lines   = LINES;
-    int           cols    = COLS;
-    int           local_y = 1;
-    int           local_x = 1;
-    program_data *data    = ((program_data *)arg);
-    int           check   = 0;
-    data->direction       = 0;
-
-    //    // Initialize SDL for controller input
-    //    if(SDL_Init(SDL_INIT_GAMECONTROLLER) != 0)
-    //    {
-    //        fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
-    //        return ERROR;
-    //    }
-    //
-    //    if(SDL_NumJoysticks() > 0)
-    //    {
-    //        data->controller = SDL_GameControllerOpen(0);
-    //        if(!data->controller)
-    //        {
-    //            fprintf(stderr, "Could not open game controller: %s\n", SDL_GetError());
-    //            SDL_Quit();
-    //            return ERROR;
-    //        }
-    //    }
-    //    else
-    //    {
-    //        printf("No game controllers connected.\n");
-    //        //        SDL_Quit();
-    //    }
-    // Initialize ncurses
-    // init screen and sets up screen
-    initscr();
-    // disables buffers on lines
-    raw();
-    // allows us to get arrow keys
-    keypad(stdscr, TRUE);
-    // suppresses char echoing
-    noecho();
-    // Hide the cursor
-    curs_set(0);
-
-    // creates the window
-    data->win     = newwin(lines, cols, local_y, local_x);
-    data->local_x = ONE;
-    data->local_y = ONE;
-
-    // I think the remote and local dots have to start in the same place or the logic doesn't make sense
-    // We can talk about this
-    data->remote_x = ONE;
-    data->remote_y = ONE;
-
-    // refreshes the screen
-    refresh();
-    box(data->win, 0, 0);    // borders
-
-    // draw initial dots
-    mvwprintw(data->win, data->local_y, data->local_x, "*");
-    mvwprintw(data->win, data->remote_y, data->remote_x, "@");
-
-    wrefresh(data->win);
-
-    check = socket_connect(data);
-    if(check < 0)
-    {
-        perror("socket_connect");
-        cleanup(data);
-        return ERROR;
-    }
-
-    data->local_udp_socket = check;
-
-    return WAIT_FOR_INPUT;
-}
-
-#pragma GCC diagnostic pop
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-// In this function we will select/poll for keyboard input and/or receiving a UDP packet to our IP address
-static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg)
-{
-    program_data *data;
-    //    SDL_Event     event;
-
-    // Setup for monitoring input with timeout
-    fd_set             read_fds;
-    int                nfds = 0;
-    struct timeval     timeout;
-    int                retval;
-    struct sockaddr_in client_addr;
-    socklen_t          addr_len = sizeof(client_addr);
-    uint16_t           received_int;
-
-    P101_TRACE(env);
-    data = ((program_data *)arg);
-    printf("waiting for input...\n");
-
-    // Handles Invalid Moves
-    if(data->invalid_move)
-    {
-        mvprintw(LINES + 1, 0, "INVALID MOVE                              ");    // the line needs to be this long to clear the other text
-        wrefresh(data->win);
-        data->invalid_move = false;
-    }
-    else
-    {
-        mvprintw(LINES + 1, 0, " ");
-        mvprintw(LINES + 1, 0, "Hit arrow keys or your controller to move.");
-        box(data->win, ZERO, ZERO);    // borders
-        wrefresh(data->win);
-    }
-    // timeout
-    memset(&read_fds, 0, sizeof(read_fds));
-
-    FD_SET(STDIN_FILENO, &read_fds);
-    FD_SET((long unsigned int)data->local_udp_socket, &read_fds);
-    // TODO: JUSTIN!! FD_SET the controller file descriptor here so we can poll for it
-
-    timeout.tv_sec  = TIMER_DELAY;
-    timeout.tv_usec = 0;
-
-    // TODO: JUSTIN!!
-    // we have to set the number of fds being monitored to the highest fd val plus one!
-    // this calculation will change if we are also polling for a controller
-    nfds = (nfds > data->local_udp_socket ? nfds : data->local_udp_socket) + 1;
-
-    // Triggers timer move unless something is pressed
-    retval = select(nfds, &read_fds, NULL, NULL, &timeout);
-
-    // I commented this out just to rule out any weird things happening with memory... feel free to uncomment OF COURSE
-    //  Check for SDL controller events
-    //     while(SDL_PollEvent(&event))
-    //     {
-    //         if(event.type == SDL_CONTROLLERBUTTONDOWN)
-    //         {
-    //             printf("controller button pressed down\n");
-    //             // If directional button is pressed, transition to controller input state
-    //             switch(event.cbutton.button)
-    //             {
-    //                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-    //                 case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-    //                 case SDL_CONTROLLER_BUTTON_DPAD_UP:
-    //                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-    //                     return PROCESS_CONTROLLER_INPUT;
-    //                 default:
-    //                     break;
-    //             }
-    //         }
-    //     }
-
-    if(retval == -1)
-    {
-        perror("select");
-        cleanup(data);
-        printf("exiting due to select...\n");
-        return ERROR;
-    }
-
-    if(retval == 0)
-    {
-        // Timeout occurred, trigger timer-based move
-        printf("moving with timer\n");
-        return PROCESS_TIMER_MOVE;
-    }
-
-    if(FD_ISSET(STDIN_FILENO, &read_fds))
-    {
-        // Input detected, handle keyboard input
-        char    buffer[LINES];
-        ssize_t bytes_read = read(STDIN_FILENO, buffer, sizeof(buffer) - 1);
-        if(bytes_read == -1)
-        {
-            perror("read");
-            cleanup(data);
-            printf("exiting due to keyboard read...\n");
-            return ERROR;
-        }
-        buffer[bytes_read] = '\0';
-        if(buffer[0] == '\x03')
-        {
-            printf("Ctrl+C detected, exiting gracefully.\n");
-            perror("sigint");
-            cleanup(data);
-            exit_flag = SIGINT;
-            return ERROR;
-        }
-
-        // A == up -> 1
-        if(buffer[2] == 'A')
-        {
-            data->direction = UP;
-        }
-        // B == down -> 3
-        else if(buffer[2] == 'B')
-        {
-            data->direction = DOWN;
-        }
-        // C == right -> 2
-        else if(buffer[2] == 'C')
-        {
-            data->direction = RIGHT;
-        }
-        // D == left -> 4
-        else if(buffer[2] == 'D')
-        {
-            data->direction = LEFT;
-        }
-
-        else
-        {
-            data->direction = NONE;
-        }
-        return PROCESS_KEYBOARD_INPUT;
-    }
-
-    if(FD_ISSET((long unsigned int)data->local_udp_socket, &read_fds))
-    {
-        ssize_t bytes_received;
-        // UDP packet received
-        bytes_received = recvfrom(data->local_udp_socket, &received_int, sizeof(received_int), 0, (struct sockaddr *)&client_addr, &addr_len);
-        if(bytes_received < 0)
-        {
-            perror("recvfrom");
-            cleanup(data);
-            printf("exiting due to recvfrom...\n");
-            return ERROR;
-        }
-
-        // Update program data with received integer
-        data->received_value = ntohs(received_int);    // Convert from network byte order
-        return MOVE_REMOTE;
-    }
-
-    return WAIT_FOR_INPUT;
-}
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-// In this function we will process keyboard input and validate the move.
-// If the move is invalid, we will return WAIT_FOR_INPUT
-// If the move is valie, we will return MOVE_LOCAL
-static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg)
-{
-    program_data *data = ((program_data *)arg);
-    P101_TRACE(env);
-    box(data->win, ZERO, ZERO);    // borders
-    wrefresh(data->win);
-    // gets input from the keyboard into the program data somehow
-    if(exit_flag == 0)
-    {
-        int valid_direction = process_direction(data);
-        if(valid_direction == -1)
-        {
-            return WAIT_FOR_INPUT;
-        }
-        return MOVE_LOCAL;
-    }
-
-    cleanup(data);
-    printf(" exiting...\n");
-    return P101_FSM_EXIT;
-}
-
-#pragma GCC diagnostic pop
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
-
-// Notes for PS4: Left = 13, Right = 14, Up = 11, Down = 12
-static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg)
-{
-    SDL_Event event;
-
-    program_data *data;
-    P101_TRACE(env);
-    data = ((program_data *)arg);
-    box(data->win, ZERO, ZERO);    // borders
-    wrefresh(data->win);
-
-    while(SDL_PollEvent(&event))
-    {
-        if(event.type == SDL_CONTROLLERBUTTONDOWN)
-        {
-            switch(event.cbutton.button)
-            {
-                case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                    data->local_x--;
-                    if(data->local_x < 1)
-                    {
-                        data->local_x++;
-                        data->invalid_move = true;
-                        return WAIT_FOR_INPUT;
-                    }
-                    return MOVE_LOCAL;
-                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                    data->local_x++;
-                    if(data->local_x >= COLS - 1)
-                    {
-                        data->local_x--;
-                        data->invalid_move = true;
-                        return WAIT_FOR_INPUT;
-                    }
-                    return MOVE_LOCAL;
-                case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                    data->local_y--;
-                    if(data->local_y < 1)
-                    {
-                        data->local_y++;
-                        data->invalid_move = true;
-                        return WAIT_FOR_INPUT;
-                    }
-                    return MOVE_LOCAL;
-                case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                    data->local_y++;
-                    if(data->local_y >= LINES - 1)
-                    {
-                        data->local_y--;
-                        data->invalid_move = true;
-                        return WAIT_FOR_INPUT;
-                    }
-                    return MOVE_LOCAL;
-                default:
-                    printf("Unhandled button: %d\n", event.cbutton.button);
-                    break;
-            }
-        }
-    }
-
-    return WAIT_FOR_INPUT;
-}
-#endif
-
-#pragma GCC diagnostic pop
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p101_error *err, void *arg)
-{
-    uint32_t      direction;
-    program_data *data = ((program_data *)arg);
-    int           valid_direction;
-    P101_TRACE(env);
-    box(data->win, ZERO, ZERO);
-    wrefresh(data->win);
-
-    // Generate random direction: 0 = LEFT, 1 = RIGHT, 2 = UP, 3 = DOWN
-    direction       = arc4random_uniform(4);
-    data->direction = (int)direction + 1;
-    // Adjust position based on direction
-    valid_direction = process_direction(data);
-    if(valid_direction == -1)
-    {
-        return WAIT_FOR_INPUT;
-    }
-    // Trigger MOVE_LOCAL for valid moves
-    return MOVE_LOCAL;
-}
-
-#pragma GCC diagnostic pop
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-// This function will do the move on the local machine
-static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error *err, void *arg)
-{
-    program_data *data;
-    P101_TRACE(env);
-    data = ((program_data *)arg);
-    wclear(data->win);
-    mvwprintw(data->win, data->local_y, data->local_x, "*");
-    mvwprintw(data->win, data->remote_y, data->remote_x, "@");
-    send_udp_packet(data->remote_ip, data->remote_port, data->send_value);
-    return WAIT_FOR_INPUT;
-}
-
-#pragma GCC diagnostic pop
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-// This function will do the move on the remote machine
-static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_error *err, void *arg)
-{
-    program_data *data = ((program_data *)arg);
-    P101_TRACE(env);
-    wclear(data->win);
-
-    // I don't think we should actually need to keep the move on the board because the move should have been
-    // validated on the sending side. But I kept in the checks minimally just in case
-    switch(data->received_value)
-    {
-        case 4:    // LEFT
-            data->remote_x = data->remote_x - 1;
-            if(data->remote_x < 1)
-            {
-                data->remote_x = data->remote_x + 1;
-            }
-            break;
-        case 2:    // RIGHT
-            data->remote_x = data->remote_x + 1;
-            if(data->remote_x >= COLS - 1)
-            {
-                data->remote_x = data->remote_x - 1;
-            }
-            break;
-        case 1:    // UP
-            data->remote_y = data->remote_y - 1;
-            if(data->remote_y < 1)
-            {
-                data->remote_y = data->remote_y + 1;
-            }
-            break;
-        case 3:    // DOWN
-            data->remote_y = data->remote_y + 1;
-            if(data->remote_y >= COLS - 1)
-            {
-                data->remote_y = data->remote_y - 1;
-            }
-            break;
-        default:
-            printf("unknown keyboard input\n");
-            sleep(2);
-    }
-    mvwprintw(data->win, data->remote_y, data->remote_x, "@");
-    mvwprintw(data->win, data->local_y, data->local_x, "*");
-    return WAIT_FOR_INPUT;
-}
-
-#pragma GCC diagnostic pop
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-static p101_fsm_state_t state_error(const struct p101_env *env, struct p101_error *err, void *arg)
-{
-    P101_TRACE(env);
-
-    return P101_FSM_EXIT;
-}
-
-#pragma GCC diagnostic pop
-
 static void setup_signal_handler(void)
 {
     struct sigaction sa;
@@ -766,40 +308,6 @@ static void sigint_handler(int signum)
 }
 
 #pragma GCC diagnostic pop
-
-void send_udp_packet(const char *remote_ip, in_port_t remote_port, uint16_t send_value)
-{
-    int                     sockfd;
-    struct sockaddr_storage dest_addr;
-    socklen_t               addr_len;
-    int                     ret_val = 0;
-
-    setup_network_address(&dest_addr, &addr_len, remote_ip, remote_port, &ret_val);
-    if(ret_val != 0)
-    {
-        perror("Setup network address failed");
-        exit_flag = SIGINT;
-    }
-
-    // Create a UDP socket
-    sockfd = socket(dest_addr.ss_family, SOCK_DGRAM, 0);    // NOLINT(android-cloexec-socket)
-    if(sockfd < 0)
-    {
-        perror("Socket creation failed");
-        exit_flag = SIGINT;
-    }
-    else
-    {
-        // Send the integer
-        if(sendto(sockfd, &send_value, sizeof(send_value), 0, (struct sockaddr *)&dest_addr, addr_len) < 0)
-        {
-            perror("Sendto failed");
-            exit_flag = SIGINT;
-        }
-        // Close the socket
-        close(sockfd);
-    }
-}
 
 void setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, const char *address, in_port_t port, int *err)
 {
@@ -833,25 +341,6 @@ void setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, c
     {
         fprintf(stderr, "%s is not an IPv4 or an IPv6 address\n", address);
         *err = -1;
-    }
-}
-
-void cleanup(program_data *data)
-{
-    if(data->win)
-    {
-        endwin();
-    }
-#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
-    if(data->controller)
-    {
-        SDL_GameControllerClose(data->controller);
-    }
-#endif
-    if(data->local_udp_socket >= 0)
-    {
-        close(data->local_udp_socket);
-        data->local_udp_socket = -1;
     }
 }
 
@@ -977,4 +466,464 @@ int socket_connect(const program_data *data)
     }
     printf("Socket bound to port %d\n", data->local_port);
     return sock;
+}
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
+// Initializes the program’s state, including setting up the ncurses window and the socket connection
+static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err, void *arg)
+{
+    int           lines   = LINES;
+    int           cols    = COLS;
+    int           local_y = 1;
+    int           local_x = 1;
+    program_data *data    = ((program_data *)arg);
+    int           check   = 0;
+    data->direction       = 0;
+
+    // Initialize ncurses init screen and sets up screen
+    initscr();
+    // disables buffers on lines
+    raw();
+    // allows us to get arrow keys
+    keypad(stdscr, TRUE);
+    // suppresses char echoing
+    noecho();
+    // Hide the cursor
+    curs_set(0);
+
+    // creates the window
+    data->win     = newwin(lines, cols, local_y, local_x);
+
+	// Sets up the dots
+    data->local_x = ONE;
+    data->local_y = ONE;
+    data->remote_x = ONE;
+    data->remote_y = ONE;
+
+    // refreshes the screen
+    refresh();
+    box(data->win, 0, 0);    // borders
+
+    // draw initial dots
+    mvwprintw(data->win, data->local_y, data->local_x, "*");
+    mvwprintw(data->win, data->remote_y, data->remote_x, "@");
+    wrefresh(data->win);
+
+    check = socket_connect(data);
+    if(check < 0)
+    {
+        perror("socket_connect");
+        cleanup(data);
+        return ERROR;
+    }
+
+    data->local_udp_socket = check;
+
+    return WAIT_FOR_INPUT;
+}
+
+#pragma GCC diagnostic pop
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
+// In this function we will select/poll for keyboard input and/or receiving a UDP packet to our IP address
+static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg)
+{
+    program_data *data;
+
+    // Setup for monitoring input with timeout
+    fd_set             read_fds;
+    int                nfds = 0;
+    struct timeval     timeout;
+    int                retval;
+    struct sockaddr_in client_addr;
+    socklen_t          addr_len = sizeof(client_addr);
+    uint16_t           received_int;
+
+    P101_TRACE(env);
+    data = ((program_data *)arg);
+    printf("waiting for input...\n");
+
+    // Handles Invalid Moves
+    if(data->invalid_move)
+    {
+        mvprintw(LINES + 1, 0, "INVALID MOVE                              ");    // the line needs to be this long to clear the other text
+        wrefresh(data->win);
+        data->invalid_move = false;
+    }
+    else
+    {
+        mvprintw(LINES + 1, 0, " ");
+        mvprintw(LINES + 1, 0, "Hit arrow keys or your controller to move.");
+        box(data->win, ZERO, ZERO);    // borders
+        wrefresh(data->win);
+    }
+
+    // timeout
+    memset(&read_fds, 0, sizeof(read_fds));
+
+    FD_SET(STDIN_FILENO, &read_fds);
+    FD_SET((long unsigned int)data->local_udp_socket, &read_fds);
+
+    timeout.tv_sec  = TIMER_DELAY;
+    timeout.tv_usec = 0;
+
+    nfds = (nfds > data->local_udp_socket ? nfds : data->local_udp_socket) + 1;
+
+    // Triggers timer move unless something is pressed
+    retval = select(nfds, &read_fds, NULL, NULL, &timeout);
+
+    if(retval == -1)
+    {
+        perror("select");
+        cleanup(data);
+        printf("exiting due to select...\n");
+        return ERROR;
+    }
+
+    if(retval == 0)
+    {
+        // Timeout occurred, trigger timer-based move
+        printf("moving with timer\n");
+        return PROCESS_TIMER_MOVE;
+    }
+
+    if(FD_ISSET(STDIN_FILENO, &read_fds))
+    {
+        // Input detected, handle keyboard input
+        char    buffer[LINES];
+        ssize_t bytes_read = read(STDIN_FILENO, buffer, sizeof(buffer) - 1);
+        if(bytes_read == -1)
+        {
+            perror("read");
+            cleanup(data);
+            printf("exiting due to keyboard read...\n");
+            return ERROR;
+        }
+        buffer[bytes_read] = '\0';
+        if(buffer[0] == '\x03')
+        {
+            printf("Ctrl+C detected, exiting gracefully.\n");
+            perror("sigint");
+            cleanup(data);
+            exit_flag = SIGINT;
+            return ERROR;
+        }
+
+        // A == up -> 1
+        if(buffer[2] == 'A')
+        {
+            data->direction = UP;
+        }
+        // B == down -> 3
+        else if(buffer[2] == 'B')
+        {
+            data->direction = DOWN;
+        }
+        // C == right -> 2
+        else if(buffer[2] == 'C')
+        {
+            data->direction = RIGHT;
+        }
+        // D == left -> 4
+        else if(buffer[2] == 'D')
+        {
+            data->direction = LEFT;
+        }
+
+        else
+        {
+            data->direction = NONE;
+        }
+        return PROCESS_KEYBOARD_INPUT;
+    }
+
+    if(FD_ISSET((long unsigned int)data->local_udp_socket, &read_fds))
+    {
+        ssize_t bytes_received;
+        // UDP packet received
+        bytes_received = recvfrom(data->local_udp_socket, &received_int, sizeof(received_int), 0, (struct sockaddr *)&client_addr, &addr_len);
+        if(bytes_received < 0)
+        {
+            perror("recvfrom");
+            cleanup(data);
+            printf("exiting due to recvfrom...\n");
+            return ERROR;
+        }
+
+        // Update program data with received integer
+        data->received_value = ntohs(received_int);    // Convert from network byte order
+        return MOVE_REMOTE;
+    }
+
+    return WAIT_FOR_INPUT;
+}
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
+// In this function we will process keyboard input and validate the move.
+// If the move is invalid, we will return WAIT_FOR_INPUT
+// If the move is valie, we will return MOVE_LOCAL
+static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg)
+{
+    program_data *data = ((program_data *)arg);
+    P101_TRACE(env);
+    box(data->win, ZERO, ZERO);    // borders
+    wrefresh(data->win);
+    // gets input from the keyboard into the program data somehow
+    if(exit_flag == 0)
+    {
+        int valid_direction = process_direction(data);
+        if(valid_direction == -1)
+        {
+            return WAIT_FOR_INPUT;
+        }
+        return MOVE_LOCAL;
+    }
+
+    cleanup(data);
+    printf(" exiting...\n");
+    return P101_FSM_EXIT;
+}
+
+#pragma GCC diagnostic pop
+
+//#pragma GCC diagnostic push
+//#pragma GCC diagnostic ignored "-Wunused-parameter"
+//
+//#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
+//
+//// Notes for PS4: Left = 13, Right = 14, Up = 11, Down = 12
+//static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg)
+//{
+//    SDL_Event event;
+//
+//    program_data *data;
+//    P101_TRACE(env);
+//    data = ((program_data *)arg);
+//    box(data->win, ZERO, ZERO);    // borders
+//    wrefresh(data->win);
+//
+//    while(SDL_PollEvent(&event))
+//    {
+//        if(event.type == SDL_CONTROLLERBUTTONDOWN)
+//        {
+//            switch(event.cbutton.button)
+//            {
+//                case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+//                    data->local_x--;
+//                    if(data->local_x < 1)
+//                    {
+//                        data->local_x++;
+//                        data->invalid_move = true;
+//                        return WAIT_FOR_INPUT;
+//                    }
+//                    return MOVE_LOCAL;
+//                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+//                    data->local_x++;
+//                    if(data->local_x >= COLS - 1)
+//                    {
+//                        data->local_x--;
+//                        data->invalid_move = true;
+//                        return WAIT_FOR_INPUT;
+//                    }
+//                    return MOVE_LOCAL;
+//                case SDL_CONTROLLER_BUTTON_DPAD_UP:
+//                    data->local_y--;
+//                    if(data->local_y < 1)
+//                    {
+//                        data->local_y++;
+//                        data->invalid_move = true;
+//                        return WAIT_FOR_INPUT;
+//                    }
+//                    return MOVE_LOCAL;
+//                case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+//                    data->local_y++;
+//                    if(data->local_y >= LINES - 1)
+//                    {
+//                        data->local_y--;
+//                        data->invalid_move = true;
+//                        return WAIT_FOR_INPUT;
+//                    }
+//                    return MOVE_LOCAL;
+//                default:
+//                    printf("Unhandled button: %d\n", event.cbutton.button);
+//                    break;
+//            }
+//        }
+//    }
+//
+//    return WAIT_FOR_INPUT;
+//}
+//#endif
+//
+//#pragma GCC diagnostic pop
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
+// Validates a random movement if no input is received after set time
+static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p101_error *err, void *arg)
+{
+    uint32_t      direction;
+    program_data *data = ((program_data *)arg);
+    int           valid_direction;
+    P101_TRACE(env);
+    box(data->win, ZERO, ZERO);
+    wrefresh(data->win);
+
+    // Generate random direction: 0 = LEFT, 1 = RIGHT, 2 = UP, 3 = DOWN
+    direction       = arc4random_uniform(4);
+    data->direction = (int)direction + 1;
+    // Adjust position based on direction
+    valid_direction = process_direction(data);
+    if(valid_direction == -1)
+    {
+        return WAIT_FOR_INPUT;
+    }
+    // Trigger MOVE_LOCAL for valid moves
+    return MOVE_LOCAL;
+}
+
+#pragma GCC diagnostic pop
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
+// This function will do the move on the local machine
+static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error *err, void *arg)
+{
+    program_data *data;
+    P101_TRACE(env);
+    data = ((program_data *)arg);
+    wclear(data->win);
+    mvwprintw(data->win, data->local_y, data->local_x, "*");
+    mvwprintw(data->win, data->remote_y, data->remote_x, "@");
+    send_udp_packet(data->remote_ip, data->remote_port, data->send_value);
+    return WAIT_FOR_INPUT;
+}
+
+#pragma GCC diagnostic pop
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
+// This function will do the move on the remote machine
+static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_error *err, void *arg)
+{
+    program_data *data = ((program_data *)arg);
+    P101_TRACE(env);
+    wclear(data->win);
+
+    switch(data->received_value)
+    {
+        case 4:    // LEFT
+            data->remote_x = data->remote_x - 1;
+            if(data->remote_x < 1)
+            {
+                data->remote_x = data->remote_x + 1;
+            }
+            break;
+        case 2:    // RIGHT
+            data->remote_x = data->remote_x + 1;
+            if(data->remote_x >= COLS - 1)
+            {
+                data->remote_x = data->remote_x - 1;
+            }
+            break;
+        case 1:    // UP
+            data->remote_y = data->remote_y - 1;
+            if(data->remote_y < 1)
+            {
+                data->remote_y = data->remote_y + 1;
+            }
+            break;
+        case 3:    // DOWN
+            data->remote_y = data->remote_y + 1;
+            if(data->remote_y >= COLS - 1)
+            {
+                data->remote_y = data->remote_y - 1;
+            }
+            break;
+        default:
+            printf("unknown keyboard input\n");
+            sleep(2);
+    }
+    mvwprintw(data->win, data->remote_y, data->remote_x, "@");
+    mvwprintw(data->win, data->local_y, data->local_x, "*");
+    return WAIT_FOR_INPUT;
+}
+
+#pragma GCC diagnostic pop
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
+// Handles errors by transitioning the program to and exit state
+static p101_fsm_state_t state_error(const struct p101_env *env, struct p101_error *err, void *arg)
+{
+    P101_TRACE(env);
+
+    return P101_FSM_EXIT;
+}
+
+#pragma GCC diagnostic pop
+
+// Sends a UDP packet with the local player’s movement data to the remote system
+void send_udp_packet(const char *remote_ip, in_port_t remote_port, uint16_t send_value)
+{
+    int                     sockfd;
+    struct sockaddr_storage dest_addr;
+    socklen_t               addr_len;
+    int                     ret_val = 0;
+
+    setup_network_address(&dest_addr, &addr_len, remote_ip, remote_port, &ret_val);
+    if(ret_val != 0)
+    {
+        perror("Setup network address failed");
+        exit_flag = SIGINT;
+    }
+
+    // Create a UDP socket
+    sockfd = socket(dest_addr.ss_family, SOCK_DGRAM, 0);    // NOLINT(android-cloexec-socket)
+    if(sockfd < 0)
+    {
+        perror("Socket creation failed");
+        exit_flag = SIGINT;
+    }
+    else
+    {
+        // Send the integer
+        if(sendto(sockfd, &send_value, sizeof(send_value), 0, (struct sockaddr *)&dest_addr, addr_len) < 0)
+        {
+            perror("Sendto failed");
+            exit_flag = SIGINT;
+        }
+        // Close the socket
+        close(sockfd);
+    }
+}
+
+// Free up allocated resources before exiting
+void cleanup(program_data *data)
+{
+    if(data->win)
+    {
+        endwin();
+    }
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
+    if(data->controller)
+    {
+        SDL_GameControllerClose(data->controller);
+    }
+#endif
+    if(data->local_udp_socket >= 0)
+    {
+        close(data->local_udp_socket);
+        data->local_udp_socket = -1;
+    }
 }
