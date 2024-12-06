@@ -764,28 +764,28 @@ static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_erro
 
     switch(data->received_value)
     {
-        case 4:    // LEFT
+        case LEFT:    // LEFT
             data->remote_x = data->remote_x - 1;
             if(data->remote_x < 1)
             {
                 data->remote_x = data->remote_x + 1;
             }
             break;
-        case 2:    // RIGHT
+        case RIGHT:    // RIGHT
             data->remote_x = data->remote_x + 1;
             if(data->remote_x >= COLS - 1)
             {
                 data->remote_x = data->remote_x - 1;
             }
             break;
-        case 1:    // UP
+        case UP:    // UP
             data->remote_y = data->remote_y - 1;
             if(data->remote_y < 1)
             {
                 data->remote_y = data->remote_y + 1;
             }
             break;
-        case 3:    // DOWN
+        case DOWN:    // DOWN
             data->remote_y = data->remote_y + 1;
             if(data->remote_y >= COLS - 1)
             {
@@ -821,7 +821,7 @@ int process_direction(program_data *data)
 {
     switch(data->direction)
     {
-        case 4:    // LEFT
+        case LEFT:    // LEFT
             data->local_x = data->local_x - 1;
             if(data->local_x < 1)
             {
@@ -831,7 +831,7 @@ int process_direction(program_data *data)
             }
             data->send_value = htons(LEFT);    // serialized integer
             break;
-        case 2:    // RIGHT
+        case RIGHT:    // RIGHT
             data->local_x = data->local_x + 1;
             if(data->local_x >= COLS - 1)
             {
@@ -841,7 +841,7 @@ int process_direction(program_data *data)
             }
             data->send_value = htons(RIGHT);    // serialized integer
             break;
-        case 1:    // UP
+        case UP:    // UP
             data->local_y = data->local_y - 1;
             if(data->local_y < 1)
             {
@@ -851,7 +851,7 @@ int process_direction(program_data *data)
             }
             data->send_value = htons(UP);    // serialized integer
             break;
-        case 3:    // DOWN
+        case DOWN:    // DOWN
             data->local_y = data->local_y + 1;
             if(data->local_y >= COLS - 1)
             {
