@@ -618,24 +618,19 @@ static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_e
 // If the move is valie, we will return MOVE_LOCAL
 static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg)
 {
+    int           valid_direction;
     program_data *data = ((program_data *)arg);
     P101_TRACE(env);
     box(data->win, ZERO, ZERO);    // borders
     wrefresh(data->win);
     // gets input from the keyboard into the program data somehow
-    if(exit_flag == 0)
-    {
-        int valid_direction = process_direction(data);
-        if(valid_direction == -1)
-        {
-            return WAIT_FOR_INPUT;
-        }
-        return MOVE_LOCAL;
-    }
 
-    cleanup(data);
-    printf(" exiting...\n");
-    return P101_FSM_EXIT;
+    valid_direction = process_direction(data);
+    if(valid_direction == -1)
+    {
+        return WAIT_FOR_INPUT;
+    }
+    return MOVE_LOCAL;
 }
 
 #pragma GCC diagnostic pop
