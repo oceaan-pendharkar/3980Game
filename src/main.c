@@ -79,16 +79,13 @@ enum application_states
     ERROR
 };
 
-static void           parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data, int *err);
-_Noreturn static void usage(const char *program_name, int exit_code, const char *message);
-
-static void setup_signal_handler(void);
-static void sigint_handler(int signum);
-void        setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, const char *address, in_port_t port, int *err);
-int         process_direction(program_data *data);
-in_port_t   convert_port(const char *str, int *err);
-int         socket_connect(const program_data *data);
-
+static void             parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data, int *err);
+_Noreturn static void   usage(const char *program_name, int exit_code, const char *message);
+in_port_t               convert_port(const char *str, int *err);
+static void             setup_signal_handler(void);
+static void             sigint_handler(int signum);
+void                    setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, const char *address, in_port_t port, int *err);
+int                     socket_connect(const program_data *data);
 static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t wait_for_input(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struct p101_error *err, void *arg);
@@ -96,6 +93,7 @@ static p101_fsm_state_t process_timer_move(const struct p101_env *env, struct p1
 static p101_fsm_state_t move_local(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_error *err, void *arg);
 static p101_fsm_state_t state_error(const struct p101_env *env, struct p101_error *err, void *arg);
+int                     process_direction(program_data *data);
 static void             send_udp_packet(const char *remote_ip, in_port_t remote_port, uint16_t send_value);
 void                    cleanup(program_data *data);
 
@@ -185,6 +183,7 @@ int main(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
+// Parse the command line arguments
 static void parse_arguments(const struct p101_env *env, int argc, char *argv[], bool *bad, bool *will, bool *did, program_data *data, int *err)
 {
     int opt;
@@ -267,6 +266,7 @@ static void parse_arguments(const struct p101_env *env, int argc, char *argv[], 
     }
 }
 
+// Display a usage message when the command line argument has an issue
 _Noreturn static void usage(const char *program_name, int exit_code, const char *message)
 {
     if(message)
@@ -283,119 +283,7 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
     exit(exit_code);
 }
 
-static void setup_signal_handler(void)
-{
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-#if defined(__clang__)
-    #pragma clang diagnostic push
-    #pragma clang diagnostic ignored "-Wdisabled-macro-expansion"
-#endif
-    sa.sa_handler = sigint_handler;
-#if defined(__clang__)
-    #pragma clang diagnostic pop
-#endif
-    sigaction(SIGINT, &sa, NULL);
-}
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-static void sigint_handler(int signum)
-{
-    exit_flag = 1;
-    printf("SIGINT received. Exiting...\n");
-}
-
-#pragma GCC diagnostic pop
-
-void setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, const char *address, in_port_t port, int *err)
-{
-    in_port_t net_port;
-    *addr_len = 0;
-    net_port  = htons(port);
-    memset(addr, 0, sizeof(*addr));
-
-    if(inet_pton(AF_INET, address, &(((struct sockaddr_in *)addr)->sin_addr)) == 1)
-    {
-        struct sockaddr_in *ipv4_addr;
-        //        char                str[INET_ADDRSTRLEN];
-
-        ipv4_addr           = (struct sockaddr_in *)addr;
-        addr->ss_family     = AF_INET;
-        ipv4_addr->sin_port = net_port;
-        *addr_len           = sizeof(struct sockaddr_in);
-        //        printf("IPv4 address: %s\n", inet_ntop(AF_INET, &(ipv4_addr->sin_addr), str, sizeof(str)));
-    }
-    else if(inet_pton(AF_INET6, address, &(((struct sockaddr_in6 *)addr)->sin6_addr)) == 1)
-    {
-        struct sockaddr_in6 *ipv6_addr;
-        //        char                 str[INET6_ADDRSTRLEN];
-        ipv6_addr            = (struct sockaddr_in6 *)addr;
-        addr->ss_family      = AF_INET6;
-        ipv6_addr->sin6_port = net_port;
-        *addr_len            = sizeof(struct sockaddr_in6);
-        //        printf("IPv6 address: %s\n", inet_ntop(AF_INET6, &(ipv6_addr->sin6_addr), str, sizeof(str)));
-    }
-    else
-    {
-        fprintf(stderr, "%s is not an IPv4 or an IPv6 address\n", address);
-        *err = -1;
-    }
-}
-
-int process_direction(program_data *data)
-{
-    switch(data->direction)
-    {
-        case 4:    // LEFT
-            data->local_x = data->local_x - 1;
-            if(data->local_x < 1)
-            {
-                data->local_x      = data->local_x + 1;
-                data->invalid_move = true;
-                return -1;
-            }
-            data->send_value = htons(LEFT);    // serialized integer
-            break;
-        case 2:    // RIGHT
-            data->local_x = data->local_x + 1;
-            if(data->local_x >= COLS - 1)
-            {
-                data->local_x      = data->local_x - 1;
-                data->invalid_move = true;
-                return -1;
-            }
-            data->send_value = htons(RIGHT);    // serialized integer
-            break;
-        case 1:    // UP
-            data->local_y = data->local_y - 1;
-            if(data->local_y < 1)
-            {
-                data->local_y      = data->local_y + 1;
-                data->invalid_move = true;
-                return -1;
-            }
-            data->send_value = htons(UP);    // serialized integer
-            break;
-        case 3:    // DOWN
-            data->local_y = data->local_y + 1;
-            if(data->local_y >= COLS - 1)
-            {
-                data->local_y      = data->local_y - 1;
-                data->invalid_move = true;
-                return -1;
-            }
-            data->send_value = htons(DOWN);    // serialized integer
-            break;
-        default:
-            printf("unknown keyboard input\n");
-            sleep(2);
-            return -1;
-    }
-    return 0;
-}
-
+// Converts a user-provided number into a valid port value
 in_port_t convert_port(const char *str, int *err)
 {
     in_port_t port;
@@ -434,6 +322,71 @@ done:
     return port;
 }
 
+// Sets up a signal handler so the program can terminate gracefully
+static void setup_signal_handler(void)
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+#if defined(__clang__)
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wdisabled-macro-expansion"
+#endif
+    sa.sa_handler = sigint_handler;
+#if defined(__clang__)
+    #pragma clang diagnostic pop
+#endif
+    sigaction(SIGINT, &sa, NULL);
+}
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
+// Handles a SIGINT signal by setting a flag to signal termination
+static void sigint_handler(int signum)
+{
+    exit_flag = 1;
+    printf("SIGINT received. Exiting...\n");
+}
+
+#pragma GCC diagnostic pop
+
+// Configures the network based on the IP address and port provided
+void setup_network_address(struct sockaddr_storage *addr, socklen_t *addr_len, const char *address, in_port_t port, int *err)
+{
+    in_port_t net_port;
+    *addr_len = 0;
+    net_port  = htons(port);
+    memset(addr, 0, sizeof(*addr));
+
+    if(inet_pton(AF_INET, address, &(((struct sockaddr_in *)addr)->sin_addr)) == 1)
+    {
+        struct sockaddr_in *ipv4_addr;
+        //        char                str[INET_ADDRSTRLEN];
+
+        ipv4_addr           = (struct sockaddr_in *)addr;
+        addr->ss_family     = AF_INET;
+        ipv4_addr->sin_port = net_port;
+        *addr_len           = sizeof(struct sockaddr_in);
+        //        printf("IPv4 address: %s\n", inet_ntop(AF_INET, &(ipv4_addr->sin_addr), str, sizeof(str)));
+    }
+    else if(inet_pton(AF_INET6, address, &(((struct sockaddr_in6 *)addr)->sin6_addr)) == 1)
+    {
+        struct sockaddr_in6 *ipv6_addr;
+        //        char                 str[INET6_ADDRSTRLEN];
+        ipv6_addr            = (struct sockaddr_in6 *)addr;
+        addr->ss_family      = AF_INET6;
+        ipv6_addr->sin6_port = net_port;
+        *addr_len            = sizeof(struct sockaddr_in6);
+        //        printf("IPv6 address: %s\n", inet_ntop(AF_INET6, &(ipv6_addr->sin6_addr), str, sizeof(str)));
+    }
+    else
+    {
+        fprintf(stderr, "%s is not an IPv4 or an IPv6 address\n", address);
+        *err = -1;
+    }
+}
+
+// Sets up and binds a UDP socket on the local machine
 int socket_connect(const program_data *data)
 {
     struct sockaddr_storage server_addr;
@@ -494,11 +447,11 @@ static p101_fsm_state_t setup(const struct p101_env *env, struct p101_error *err
     curs_set(0);
 
     // creates the window
-    data->win     = newwin(lines, cols, local_y, local_x);
+    data->win = newwin(lines, cols, local_y, local_x);
 
-	// Sets up the dots
-    data->local_x = ONE;
-    data->local_y = ONE;
+    // Sets up the dots
+    data->local_x  = ONE;
+    data->local_y  = ONE;
     data->remote_x = ONE;
     data->remote_y = ONE;
 
@@ -692,76 +645,76 @@ static p101_fsm_state_t process_keyboard_input(const struct p101_env *env, struc
 
 #pragma GCC diagnostic pop
 
-//#pragma GCC diagnostic push
-//#pragma GCC diagnostic ignored "-Wunused-parameter"
+// #pragma GCC diagnostic push
+// #pragma GCC diagnostic ignored "-Wunused-parameter"
 //
-//#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
+// #if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
 //
 //// Notes for PS4: Left = 13, Right = 14, Up = 11, Down = 12
-//static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg)
+// static p101_fsm_state_t process_controller_input(const struct p101_env *env, struct p101_error *err, void *arg)
 //{
-//    SDL_Event event;
+//     SDL_Event event;
 //
-//    program_data *data;
-//    P101_TRACE(env);
-//    data = ((program_data *)arg);
-//    box(data->win, ZERO, ZERO);    // borders
-//    wrefresh(data->win);
+//     program_data *data;
+//     P101_TRACE(env);
+//     data = ((program_data *)arg);
+//     box(data->win, ZERO, ZERO);    // borders
+//     wrefresh(data->win);
 //
-//    while(SDL_PollEvent(&event))
-//    {
-//        if(event.type == SDL_CONTROLLERBUTTONDOWN)
-//        {
-//            switch(event.cbutton.button)
-//            {
-//                case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-//                    data->local_x--;
-//                    if(data->local_x < 1)
-//                    {
-//                        data->local_x++;
-//                        data->invalid_move = true;
-//                        return WAIT_FOR_INPUT;
-//                    }
-//                    return MOVE_LOCAL;
-//                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-//                    data->local_x++;
-//                    if(data->local_x >= COLS - 1)
-//                    {
-//                        data->local_x--;
-//                        data->invalid_move = true;
-//                        return WAIT_FOR_INPUT;
-//                    }
-//                    return MOVE_LOCAL;
-//                case SDL_CONTROLLER_BUTTON_DPAD_UP:
-//                    data->local_y--;
-//                    if(data->local_y < 1)
-//                    {
-//                        data->local_y++;
-//                        data->invalid_move = true;
-//                        return WAIT_FOR_INPUT;
-//                    }
-//                    return MOVE_LOCAL;
-//                case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-//                    data->local_y++;
-//                    if(data->local_y >= LINES - 1)
-//                    {
-//                        data->local_y--;
-//                        data->invalid_move = true;
-//                        return WAIT_FOR_INPUT;
-//                    }
-//                    return MOVE_LOCAL;
-//                default:
-//                    printf("Unhandled button: %d\n", event.cbutton.button);
-//                    break;
-//            }
-//        }
-//    }
+//     while(SDL_PollEvent(&event))
+//     {
+//         if(event.type == SDL_CONTROLLERBUTTONDOWN)
+//         {
+//             switch(event.cbutton.button)
+//             {
+//                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+//                     data->local_x--;
+//                     if(data->local_x < 1)
+//                     {
+//                         data->local_x++;
+//                         data->invalid_move = true;
+//                         return WAIT_FOR_INPUT;
+//                     }
+//                     return MOVE_LOCAL;
+//                 case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+//                     data->local_x++;
+//                     if(data->local_x >= COLS - 1)
+//                     {
+//                         data->local_x--;
+//                         data->invalid_move = true;
+//                         return WAIT_FOR_INPUT;
+//                     }
+//                     return MOVE_LOCAL;
+//                 case SDL_CONTROLLER_BUTTON_DPAD_UP:
+//                     data->local_y--;
+//                     if(data->local_y < 1)
+//                     {
+//                         data->local_y++;
+//                         data->invalid_move = true;
+//                         return WAIT_FOR_INPUT;
+//                     }
+//                     return MOVE_LOCAL;
+//                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+//                     data->local_y++;
+//                     if(data->local_y >= LINES - 1)
+//                     {
+//                         data->local_y--;
+//                         data->invalid_move = true;
+//                         return WAIT_FOR_INPUT;
+//                     }
+//                     return MOVE_LOCAL;
+//                 default:
+//                     printf("Unhandled button: %d\n", event.cbutton.button);
+//                     break;
+//             }
+//         }
+//     }
 //
-//    return WAIT_FOR_INPUT;
-//}
-//#endif
+//     return WAIT_FOR_INPUT;
+// }
+// #endif
 //
-//#pragma GCC diagnostic pop
+// #pragma GCC diagnostic pop
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -872,6 +825,59 @@ static p101_fsm_state_t state_error(const struct p101_env *env, struct p101_erro
 }
 
 #pragma GCC diagnostic pop
+
+// Updates the local player’s position and prepares that movement data for sending to the remote system
+int process_direction(program_data *data)
+{
+    switch(data->direction)
+    {
+        case 4:    // LEFT
+            data->local_x = data->local_x - 1;
+            if(data->local_x < 1)
+            {
+                data->local_x      = data->local_x + 1;
+                data->invalid_move = true;
+                return -1;
+            }
+            data->send_value = htons(LEFT);    // serialized integer
+            break;
+        case 2:    // RIGHT
+            data->local_x = data->local_x + 1;
+            if(data->local_x >= COLS - 1)
+            {
+                data->local_x      = data->local_x - 1;
+                data->invalid_move = true;
+                return -1;
+            }
+            data->send_value = htons(RIGHT);    // serialized integer
+            break;
+        case 1:    // UP
+            data->local_y = data->local_y - 1;
+            if(data->local_y < 1)
+            {
+                data->local_y      = data->local_y + 1;
+                data->invalid_move = true;
+                return -1;
+            }
+            data->send_value = htons(UP);    // serialized integer
+            break;
+        case 3:    // DOWN
+            data->local_y = data->local_y + 1;
+            if(data->local_y >= COLS - 1)
+            {
+                data->local_y      = data->local_y - 1;
+                data->invalid_move = true;
+                return -1;
+            }
+            data->send_value = htons(DOWN);    // serialized integer
+            break;
+        default:
+            printf("unknown keyboard input\n");
+            sleep(2);
+            return -1;
+    }
+    return 0;
+}
 
 // Sends a UDP packet with the local player’s movement data to the remote system
 void send_udp_packet(const char *remote_ip, in_port_t remote_port, uint16_t send_value)
