@@ -45,6 +45,7 @@
 #define ERR_NO_DIGITS 1
 #define ERR_OUT_OF_RANGE 2
 #define ERR_INVALID_CHARS 3
+#define EXIT_CODE 1
 
 typedef struct
 {
@@ -150,6 +151,7 @@ int main(int argc, char *argv[])
             {SETUP,                    ERROR,                  state_error           },
             {WAIT_FOR_INPUT,           ERROR,                  state_error           },
             {PROCESS_KEYBOARD_INPUT,   ERROR,                  state_error           },
+            {PROCESS_TIMER_MOVE,	   ERROR,				   state_error			 },
             {MOVE_LOCAL,               ERROR,                  state_error           },
             {MOVE_REMOTE,              ERROR,                  state_error           },
             {WAIT_FOR_INPUT,           P101_FSM_EXIT,          NULL                  }, //  if we ask to exit (cntrl c?)
@@ -337,7 +339,7 @@ static void setup_signal_handler(void)
 // Handles a SIGINT signal by setting a flag to signal termination
 static void sigint_handler(int signum)
 {
-    exit_flag = 1;
+    exit_flag = EXIT_CODE;
     printf("SIGINT received. Exiting...\n");
 }
 
