@@ -142,21 +142,14 @@ int main(int argc, char *argv[])
             {WAIT_FOR_INPUT,           PROCESS_TIMER_MOVE,     process_timer_move    },
             {WAIT_FOR_INPUT,           MOVE_REMOTE,            move_remote           },
             {PROCESS_KEYBOARD_INPUT,   MOVE_LOCAL,             move_local            },
-            {PROCESS_CONTROLLER_INPUT, MOVE_LOCAL,             move_local            },
             {PROCESS_TIMER_MOVE,       MOVE_LOCAL,             move_local            },
             {PROCESS_KEYBOARD_INPUT,   WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
-#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
-            {PROCESS_CONTROLLER_INPUT, WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
-#endif
             {PROCESS_TIMER_MOVE,       WAIT_FOR_INPUT,         wait_for_input        }, //  if validation fails
             {MOVE_LOCAL,               WAIT_FOR_INPUT,         wait_for_input        },
             {MOVE_REMOTE,              WAIT_FOR_INPUT,         wait_for_input        },
             {SETUP,                    ERROR,                  state_error           },
             {WAIT_FOR_INPUT,           ERROR,                  state_error           },
             {PROCESS_KEYBOARD_INPUT,   ERROR,                  state_error           },
-#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
-            {PROCESS_CONTROLLER_INPUT, ERROR,                  state_error           },
-#endif
             {MOVE_LOCAL,               ERROR,                  state_error           },
             {MOVE_REMOTE,              ERROR,                  state_error           },
             {WAIT_FOR_INPUT,           P101_FSM_EXIT,          NULL                  }, //  if we ask to exit (cntrl c?)
@@ -816,7 +809,7 @@ static p101_fsm_state_t move_remote(const struct p101_env *env, struct p101_erro
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
-// Handles errors by transitioning the program to and exit state
+// Handles errors by transitioning the program to an exit state
 static p101_fsm_state_t state_error(const struct p101_env *env, struct p101_error *err, void *arg)
 {
     P101_TRACE(env);
